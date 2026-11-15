@@ -121,7 +121,7 @@ function toast(text, kind = "") {
   el.className = "toast " + kind;
   el.textContent = text;
   $("toasts").prepend(el);
-  while ($("toasts").children.length > 3) $("toasts").lastChild.remove();
+  while ($("toasts").children.length > 2) $("toasts").lastChild.remove();
   setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 320); }, 2800);
 }
 
@@ -270,8 +270,19 @@ function teamRgb() {
   return c.join(",");
 }
 
-function drawBandAndLine(pts, nowX, headY, q, frame) {
-  if (!pts.length) return;
+/** Quotes that were replaced within a second are flicker, not a price level; leave them off the chart. */
+function settled(pts) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (i + 1 < pts.length && pts[i + 1].t - pts[i].t < 1000) continue;
+    out.push(pts[i]);
+  }
+  return out.length ? out : pts.slice(-1);
+}
+
+function drawBandAndLine(allPts, nowX, headY, q, frame) {
+  if (!allPts.length) return;
+  const pts = settled(allPts);
   // Band: bid to ask over time. Hits are judged on its edges, not the middle line.
   ctx.beginPath();
   for (let i = 0; i < pts.length; i++) {
@@ -301,9 +312,9 @@ function drawBandAndLine(pts, nowX, headY, q, frame) {
   ctx.shadowColor = `rgba(${team},0.95)`; ctx.shadowBlur = 18; ctx.stroke(); ctx.shadowBlur = 0;
   if (!reduceMotion) {
     // Light running along the line toward the head: motion without touching the price.
-    ctx.setLineDash([26, 190]); ctx.lineDashOffset = -frame / 9;
-    ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineWidth = 3.2;
-    ctx.shadowColor = "#fff"; ctx.shadowBlur = 14; ctx.stroke(); ctx.shadowBlur = 0; ctx.setLineDash([]);
+    ctx.setLineDash([22, 320]); ctx.lineDashOffset = -frame / 11;
+    ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 3;
+    ctx.stroke(); ctx.setLineDash([]);
   }
 
   // Project today's bid and ask across the future so each square shows how far it is.
@@ -347,19 +358,15 @@ function draw(frame) {
   const minLead = state.limits?.minLeadMs ?? 3000;
   const headY = yOf(state.shownMid);
 
-  // ambient motion (decoration only): motes drifting with the grid, a light sweep over what's ahead
+  // ambient motion (decoration only): a few faint motes drifting with the grid
   if (!reduceMotion) {
-    if (state.stars.length !== 46) state.stars = Array.from({ length: 46 }, () => ({ x: rand(0, 1), y: rand(0, 1), s: rand(0.6, 2), v: rand(0.3, 1), a: rand(0.15, 0.5) }));
+    if (state.stars.length !== 18) state.stars = Array.from({ length: 18 }, () => ({ x: rand(0, 1), y: rand(0, 1), s: rand(0.6, 1.6), v: rand(0.3, 1), a: rand(0.1, 0.3) }));
     for (const st of state.stars) {
       st.x -= (st.v * 0.00042 * 1280) / Math.max(W, 320);
       if (st.x < -0.02) { st.x = 1.02; st.y = rand(0, 1); }
-      ctx.fillStyle = `rgba(190,245,255,${st.a * (0.6 + 0.4 * Math.sin(frame / 500 + st.y * 40))})`;
+      ctx.fillStyle = `rgba(190,245,255,${st.a})`;
       ctx.beginPath(); ctx.arc(st.x * W, st.y * H, st.s, 0, Math.PI * 2); ctx.fill();
     }
-    const sw = (frame / 3600) % 1, sx = nowX + sw * (W - nowX);
-    const sg = ctx.createLinearGradient(sx - 150, 0, sx + 30, 0);
-    sg.addColorStop(0, `rgba(${ACCENT},0)`); sg.addColorStop(0.85, `rgba(${ACCENT},${0.1 * Math.sin(Math.PI * sw)})`); sg.addColorStop(1, `rgba(${ACCENT},0)`);
-    ctx.fillStyle = sg; ctx.fillRect(sx - 150, 0, 180, H);
   }
 
   // spread zone ahead of the line: squares here can't be tapped
@@ -478,9 +485,9 @@ function draw(frame) {
   drawBandAndLine(state.ticks, nowX, headY, q, frame);
 
   // comet trail off the head
-  if (!reduceMotion && frame % 2 < 1 + (state.headKick > 0.2 ? 1 : 0)) {
+  if (!reduceMotion && (state.headKick > 0.2 || Math.random() < 0.18)) {
     state.trail.push({ t: t, p: state.shownMid + rand(-0.0012, 0.0012), born: frame, life: rand(700, 1300), s: rand(1, 2.6) });
-    if (state.trail.length > 160) state.trail.splice(0, state.trail.length - 160);
+    if (state.trail.length > 60) state.trail.splice(0, state.trail.length - 60);
   }
   state.trail = state.trail.filter((d) => frame - d.born < d.life);
   for (const d of state.trail) {
@@ -495,11 +502,6 @@ function draw(frame) {
   ctx.strokeStyle = `rgba(255,255,255,${0.55 - pulse * 0.4})`; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(nowX, headY, 8 + pulse * 10 + kick * 14, 0, Math.PI * 2); ctx.stroke();
   const team = teamRgb();
-  if (!reduceMotion) {
-    const ping = (frame % 2200) / 2200;
-    ctx.strokeStyle = `rgba(${team},${(1 - ping) * 0.45})`; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(nowX, headY, 10 + ping * 70, 0, Math.PI * 2); ctx.stroke();
-  }
   ctx.fillStyle = "#fff"; ctx.shadowColor = `rgba(${team},1)`; ctx.shadowBlur = 22 + kick * 30;
   ctx.beginPath(); ctx.arc(nowX, headY, 6 + kick * 4, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
 
@@ -665,8 +667,8 @@ function ripple(x, y, size = 260, life = 900) {
 function tapFx(box) {
   const t0 = performance.now(), time = box.deadline - colMs() / 2, price = (box.lo + box.hi) / 2;
   state.fx.push({ kind: "ring", t0, life: 450, time, price, rgb: ACCENT, size: 60, r0: 18, width: 3 });
-  if (!reduceMotion) for (let i = 0; i < 8; i++) state.fx.push({ kind: "spark", t0, life: rand(300, 500), time, price, a: rand(0, Math.PI * 2), dist: rand(26, 50), rgb: "200,250,255", g: 0, s: 2.4 });
-  ripple(xOf(time), yOf(price), 220, 700);
+  if (!reduceMotion) for (let i = 0; i < 5; i++) state.fx.push({ kind: "spark", t0, life: rand(300, 500), time, price, a: rand(0, Math.PI * 2), dist: rand(26, 50), rgb: "200,250,255", g: 0, s: 2.4 });
+  ripple(xOf(time), yOf(price), 160, 600);
 }
 
 function priceFx(up) {
@@ -674,8 +676,8 @@ function priceFx(up) {
   state.headKick = 1;
   const rgb = up ? GREEN : RED;
   state.fx.push({ kind: "ring", t0, life: 600, time, price, rgb, size: 44, r0: 8, width: 2.5 });
-  if (!reduceMotion) for (let i = 0; i < 10; i++) state.fx.push({ kind: "spark", t0, life: rand(400, 700), time, price, a: up ? rand(-Math.PI * 0.9, -Math.PI * 0.1) : rand(Math.PI * 0.1, Math.PI * 0.9), dist: rand(20, 46), rgb, g: up ? -10 : 20, s: 2.2 });
-  ripple(W * NOW_AT, yOf(price), 340, 1100);
+  if (!reduceMotion) for (let i = 0; i < 5; i++) state.fx.push({ kind: "spark", t0, life: rand(400, 700), time, price, a: up ? rand(-Math.PI * 0.9, -Math.PI * 0.1) : rand(Math.PI * 0.1, Math.PI * 0.9), dist: rand(20, 46), rgb, g: up ? -10 : 20, s: 2.2 });
+  ripple(W * NOW_AT, yOf(price), 220, 800);
 }
 
 /** Orders arriving or leaving at the best bid/ask: real book activity, shown as sparks on that edge. */
@@ -686,45 +688,49 @@ function orderFlow(d) {
   state.sizes = { bid: b, ask: a, share: b / (b + a), shown: prev?.shown ?? b / (b + a) };
   if (!prev || reduceMotion || !state.quote) return;
   const t0 = performance.now(), time = now();
-  for (const [changed, price, rgb, dir] of [[b !== prev.bid, d.bid, GREEN, 1], [a !== prev.ask, d.ask, RED, -1]]) {
+  for (const [changed, price, rgb] of [[b !== prev.bid, d.bid, GREEN], [a !== prev.ask, d.ask, RED]]) {
     if (!changed) continue;
-    state.fx.push({ kind: "ring", t0, life: 500, time, price, rgb, size: 26, r0: 4, width: 2, a: 0.8 });
-    for (let i = 0; i < 7; i++) state.fx.push({ kind: "spark", t0, life: rand(450, 800), time, price, a: rand(-0.5, 0.5) + (dir > 0 ? -Math.PI / 2 : Math.PI / 2), dist: rand(14, 40), rgb, g: 0, s: 2 });
+    state.fx.push({ kind: "ring", t0, life: 500, time, price, rgb, size: 20, r0: 4, width: 2, a: 0.7 });
   }
 }
 
-function winFx(p, big) {
+/** One win effect, however many squares hit together. `amount` is the total; `big` adds confetti. */
+function winFx(p, amount, big) {
   const span = p.colMs ?? colMs();
   const time = p.deadline - span / 2, price = (p.lo + p.hi) / 2, t0 = performance.now();
-  state.fx.push({ kind: "burst", t0, life: 650, time, price, w: CELL_W - 8, h: CELL_H - 8, win: true });
-  state.fx.push({ kind: "ring", t0, life: 700, time, price, rgb: GREEN, size: big ? 150 : 100, r0: 24, width: 4 });
-  state.fx.push({ kind: "ring", t0: t0 + 90, life: 800, time, price, rgb: "200,255,235", size: big ? 220 : 150, r0: 24, width: 2, a: 0.7 });
-  if (!reduceMotion) for (let i = 0; i < (big ? 34 : 22); i++) state.fx.push({ kind: "spark", t0, life: rand(500, 950), time, price, a: rand(0, Math.PI * 2), dist: rand(40, big ? 140 : 100), rgb: i % 3 ? "150,255,190" : "255,240,180", s: 3 });
-  state.fx.push({ kind: "text", t0, life: 1600, time, price, dy: -6, text: fmtSigned(p.pnl), size: big ? 34 : 28, color: C.win, rise: 70 });
-  ripple(xOf(time), yOf(price), big ? 520 : 380, 1300);
+  state.fx.push({ kind: "burst", t0, life: 600, time, price, w: CELL_W - 10, h: CELL_H - 10, win: true });
+  state.fx.push({ kind: "ring", t0, life: 700, time, price, rgb: GREEN, size: big ? 130 : 90, r0: 24, width: 3 });
+  if (!reduceMotion) for (let i = 0; i < (big ? 18 : 10); i++) state.fx.push({ kind: "spark", t0, life: rand(500, 850), time, price, a: rand(0, Math.PI * 2), dist: rand(40, big ? 110 : 80), rgb: "150,255,190", s: 2.6 });
+  state.fx.push({ kind: "text", t0, life: 1500, time, price, dy: -6, text: fmtSigned(amount), size: big ? 32 : 26, color: C.win, rise: 60 });
+  ripple(xOf(time), yOf(price), big ? 380 : 260, 1000);
   if (reduceMotion) return;
-  state.shake = big ? 9 : 5;
-  state.flash = big ? 0.28 : 0.16; state.flashColor = GREEN;
-  // Coins fly from the tile to the balance.
+  state.shake = big ? 6 : 3;
+  state.flash = big ? 0.16 : 0.08; state.flashColor = GREEN;
+  // A few coins fly from the square to the balance.
   const gr = canvas.getBoundingClientRect(), wr = $("wallet").getBoundingClientRect();
   const x0 = gr.left + xOf(time), y0 = gr.top + yOf(price), x1 = wr.left + wr.width * 0.6, y1 = wr.top + wr.height / 2;
-  const n = big ? 14 : 9;
-  for (let i = 0; i < n; i++) {
-    state.over.push({ kind: "coin", i, t0: t0 + 120 + i * 45, life: 650 + rand(-80, 80), x0: x0 + rand(-14, 14), y0: y0 + rand(-10, 10), cx: (x0 + x1) / 2 + rand(-120, 120), cy: Math.min(y0, y1) - rand(60, 180), x1, y1 });
+  for (let i = 0; i < (big ? 9 : 5); i++) {
+    state.over.push({ kind: "coin", i, t0: t0 + 120 + i * 60, life: 650 + rand(-80, 80), x0: x0 + rand(-14, 14), y0: y0 + rand(-10, 10), cx: (x0 + x1) / 2 + rand(-120, 120), cy: Math.min(y0, y1) - rand(60, 180), x1, y1 });
   }
   if (big) {
-    const colors = ["#4ade80", "#26ddf9", "#f9a631", "#ffffff", "#fc4848"];
-    for (let i = 0; i < 90; i++) state.over.push({ kind: "confetti", t0, life: rand(1200, 2000), x: x0, y: y0, vx: rand(-1.2, 1.2), vy: rand(-1.5, -0.3), rot: rand(0, 6), spin: rand(-12, 12), color: colors[i % colors.length] });
+    const colors = ["#4ade80", "#26ddf9", "#f9a631", "#ffffff"];
+    for (let i = 0; i < 40; i++) state.over.push({ kind: "confetti", t0, life: rand(1100, 1700), x: x0, y: y0, vx: rand(-1.1, 1.1), vy: rand(-1.4, -0.3), rot: rand(0, 6), spin: rand(-10, 10), color: colors[i % colors.length] });
   }
 }
 
-function missFx(p) {
+/** Squares that hit at the same moment fade out quietly; only one of them carries the win effect. */
+function quietHit(p) {
+  const span = p.colMs ?? colMs();
+  state.fx.push({ kind: "burst", t0: performance.now(), life: 450, time: p.deadline - span / 2, price: (p.lo + p.hi) / 2, w: CELL_W - 10, h: CELL_H - 10, win: true });
+}
+
+function missFx(p, quiet) {
   const span = p.colMs ?? colMs();
   const time = p.deadline - span / 2, price = (p.lo + p.hi) / 2, t0 = performance.now();
-  state.fx.push({ kind: "burst", t0, life: 380, time, price, w: CELL_W - 8, h: CELL_H - 8, win: false });
-  if (!reduceMotion) for (let i = 0; i < 12; i++) state.fx.push({ kind: "shard", t0, life: rand(600, 900), time, price, vx: rand(-1.4, 1.4), vy: rand(-1.6, -0.2), rot: rand(-6, 6), s: rand(5, 11), color: i % 2 ? "rgba(140,200,255,0.9)" : "rgba(255,140,160,0.85)" });
-  state.fx.push({ kind: "text", t0, life: 1200, time, price, text: fmtSigned(p.pnl), size: 18, color: p.pnl >= 0 ? C.win : C.loss, rise: 36 });
-  if (!reduceMotion) { state.shake = 2.5; state.flash = 0.06; state.flashColor = RED; }
+  state.fx.push({ kind: "burst", t0, life: 380, time, price, w: CELL_W - 10, h: CELL_H - 10, win: false });
+  if (quiet) return;
+  if (!reduceMotion) for (let i = 0; i < 6; i++) state.fx.push({ kind: "shard", t0, life: rand(600, 900), time, price, vx: rand(-1.4, 1.4), vy: rand(-1.6, -0.2), rot: rand(-6, 6), s: rand(5, 10), color: i % 2 ? `rgba(${ACCENT},0.8)` : "rgba(252,72,72,0.8)" });
+  state.fx.push({ kind: "text", t0, life: 1100, time, price, text: fmtSigned(p.pnl), size: 17, color: p.pnl >= 0 ? C.win : C.loss, rise: 36 });
 }
 
 // ---------- input ----------
@@ -797,27 +803,49 @@ function renderPositions() {
   }
 }
 
+const pendingResults = [];
+let resultTimer = null;
+
 function onPositionEvent({ position, balance }) {
   const before = state.positions.find((x) => x.id === position.id);
   state.balance = balance;
   upsertPosition(position);
   if (position.status === "open" || (before && before.status !== "open")) return;
-  const p = { ...before, ...position };
-  showDelta(position.pnl);
-  if (position.status === "won") {
-    setStreak(state.streak + 1);
-    const big = position.pnl >= 1 || state.streak >= 3;
-    winFx(p, big);
-    sfx.win(state.streak, big); buzz(big ? [25, 40, 25, 40, 25, 40, 80] : [20, 40, 20, 40, 50]);
-    state.marks.push({ symbol: p.symbol, t: now(), price: p.side === "yes" ? p.lo : p.hi, text: fmtSigned(position.pnl) });
-    toast(`You won ${fmtMoney(position.pnl)}`, "win");
-  } else {
-    if (position.status === "expired") setStreak(0);
-    missFx(p); sfx.miss(); buzz(40);
-    const short = Math.round((p.target - (p.best ?? 0)) * 100);
-    const why = position.status === "closed" ? "Closed" : short > 0 && short < 50 ? `Missed by ${short}¢` : "Timed out";
-    toast(`${why} · ${fmtSigned(position.pnl)}`, position.pnl >= 0 ? "win" : "loss");
+  // Several squares often resolve in the same instant (same price move, same deadline).
+  // Gather them for a moment and show one result, not a pile of effects and toasts.
+  pendingResults.push({ ...before, ...position });
+  resultTimer ??= setTimeout(flushResults, 160);
+}
+
+function flushResults() {
+  resultTimer = null;
+  const batch = pendingResults.splice(0);
+  const wins = batch.filter((p) => p.status === "won"), rest = batch.filter((p) => p.status !== "won");
+  const sum = (ps) => ps.reduce((s, p) => s + p.pnl, 0);
+  if (wins.length) {
+    const total = sum(wins);
+    const milestone = [5, 10, 20].some((m) => state.streak < m && state.streak + wins.length >= m);
+    setStreak(state.streak + wins.length);
+    const big = total >= 5 || milestone;
+    const lead = wins[0];
+    for (const p of wins.slice(1)) quietHit(p);
+    winFx(lead, total, big);
+    sfx.win(state.streak, big); buzz(big ? [25, 40, 25, 40, 60] : [20, 40, 40]);
+    state.marks.push({ symbol: lead.symbol, t: now(), price: lead.side === "yes" ? lead.lo : lead.hi, text: fmtSigned(total) });
+    toast(wins.length > 1 ? `${wins.length} squares hit · won ${fmtMoney(total)}` : `You won ${fmtMoney(total)}`, "win");
   }
+  if (rest.length) {
+    const total = sum(rest);
+    if (rest.some((p) => p.status === "expired") && !wins.length) setStreak(0);
+    rest.forEach((p, i) => missFx(p, i > 0));
+    if (!wins.length) { sfx.miss(); buzz(30); }
+    const p = rest[0];
+    const short = Math.round((p.target - (p.best ?? 0)) * 100);
+    const why = rest.length > 1 ? `${rest.length} squares ${rest.every((x) => x.status === "closed") ? "closed" : "timed out"}`
+      : p.status === "closed" ? "Closed" : short > 0 && short < 50 ? `Missed by ${short}¢` : "Timed out";
+    toast(`${why} · ${fmtSigned(total)}`, total >= 0 ? "win" : "loss");
+  }
+  showDelta(sum(batch));
 }
 
 // ---------- live activity from the whole game ----------
@@ -840,8 +868,8 @@ function onMove(m) {
   };
   const box = $("activity");
   box.prepend(el);
-  while (box.children.length > 4) box.lastChild.remove();
-  setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 420); }, 6000);
+  while (box.children.length > 2) box.lastChild.remove();
+  setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 420); }, 4500);
   const dot = document.querySelector(".live");
   if (dot) { dot.style.transform = "scale(1.8)"; setTimeout(() => (dot.style.transform = ""), 180); }
 }

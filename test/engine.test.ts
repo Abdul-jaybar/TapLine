@@ -164,6 +164,27 @@ test("deadline with nobody bidding waits instead of selling at zero", async () =
   assert.equal(p.exit, 0.59);
 });
 
+test("deadline in a gapped book waits for the market, then exits anyway after the grace period", async () => {
+  const { acct, move, tap } = setup();
+  const p = await tap(0.65, 0.66);
+  move(0.3, 0.75, T0 + 60_000); // one side pulled: bid collapses
+  acct.sweep(T0 + 60_000);
+  await acct.idle();
+  assert.equal(p.status, "open");
+  move(0.58, 0.6, T0 + 65_000); // market comes back
+  acct.sweep(T0 + 65_000);
+  await acct.idle();
+  assert.equal(p.status, "expired");
+  assert.equal(p.exit, 0.58);
+
+  const p2 = await tap(0.65, 0.66);
+  move(0.3, 0.75, T0 + 60_000);
+  acct.sweep(T0 + 81_000); // still gapped after 20s: exit at what's there
+  await acct.idle();
+  assert.equal(p2.status, "expired");
+  assert.equal(p2.exit, 0.3);
+});
+
 test("one-sided market refuses new taps", async () => {
   const { acct, tap } = setup();
   acct.onQuote({ symbol: SYM, bid: null, ask: 0.61, bidSize: 0, askSize: 10, t: T0 }, T0);

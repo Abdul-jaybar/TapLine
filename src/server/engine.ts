@@ -125,6 +125,9 @@ export interface Limits {
   maxLeadMs: number;
 }
 
+/** How long a timed-out position waits for a normal two-sided quote before exiting anyway. */
+export const EXIT_GRACE_MS = 20_000;
+
 export const DEFAULT_LIMITS: Limits = {
   minStake: 1,
   maxStake: 100,
@@ -259,6 +262,11 @@ export class Account {
   sweep(now = Date.now()) {
     for (const p of this.positions) {
       if (p.status !== "open" || now < p.deadline) continue;
+      // A gapped book (one side pulled for a moment) is a terrible price to exit at. Give the
+      // market a short grace period to come back before selling into whatever is there.
+      const q = this.quoteOf(p.symbol);
+      const gapped = !q || q.bid === null || q.ask === null || q.ask - q.bid > 0.1;
+      if (gapped && now < p.deadline + EXIT_GRACE_MS) continue;
       void this.run(() => this.settle(p, "expired", 0, now)).catch(() => {});
     }
   }

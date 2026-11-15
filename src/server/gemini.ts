@@ -111,7 +111,9 @@ export function groupGames(events: RawEvent[]): Game[] {
     .sort((a, b) => Number(tradable(b)) - Number(tradable(a)) || b.volume24h - a.volume24h);
 }
 
-const tradable = (g: Game) => g.markets[0]?.contracts.some((c) => isDrawable(c)) ?? false;
+/** A game still in play: its winner market has a two-sided price that isn't pinned near 0 or 100. */
+const tradable = (g: Game) =>
+  g.markets[0]?.contracts.some((c) => isDrawable(c) && (c.bid + c.ask) / 2 > 0.12 && (c.bid + c.ask) / 2 < 0.88) ?? false;
 
 export async function fetchLiveGames(pages = 3, pageSize = 50): Promise<Game[]> {
   const events: RawEvent[] = [];
