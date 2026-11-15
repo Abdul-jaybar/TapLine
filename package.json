@@ -1,0 +1,32 @@
+{
+  "name": "tapline",
+  "version": "1.0.0",
+  "description": "Tap the live odds line: one-tap trading on Gemini prediction markets for live games",
+  "scripts": {
+    "test": "tsx --test test/*.test.ts",
+    "dev": "tsx watch src/server/index.ts",
+    "start": "tsx src/server/index.ts",
+    "typecheck": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abdul-jaybar/tapline.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Abdul-jaybar/tapline/issues"
+  },
+  "homepage": "https://github.com/Abdul-jaybar/tapline#readme",
+  "dependencies": {
+    "@hono/node-server": "^2.1.8",
+    "hono": "^4.13.18"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "type": "module"
+}

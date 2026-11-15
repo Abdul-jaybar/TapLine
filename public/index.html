@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TapLine</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark"></span>TapLine</div>
+  <button id="gameBtn" class="game-btn" aria-haspopup="dialog"><span id="gameTitle">Loading live games…</span><span class="caret">▾</span></button>
+  <div class="spacer"></div>
+  <div class="wallet"><span class="mode" id="mode">PAPER</span><span id="balance">$0.00</span></div>
+</header>
+
+<nav class="markets" id="markets" aria-label="Markets"></nav>
+<div class="contracts" id="contracts" aria-label="Contracts"></div>
+
+<main class="stage">
+  <canvas id="grid" aria-label="Live odds grid. Tap a box to trade."></canvas>
+  <div class="empty" id="empty">Loading live games from Gemini…</div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</main>
+
+<footer class="controls">
+  <div class="group" role="group" aria-label="Amount per tap">
+    <span class="lbl">Per tap</span>
+    <div id="stakes" class="seg"></div>
+  </div>
+  <div class="group" role="group" aria-label="Time per column">
+    <span class="lbl">Column</span>
+    <div id="cols" class="seg"></div>
+  </div>
+  <button id="posBtn" class="pos-btn">Positions <span id="posCount">0</span></button>
+</footer>
+
+<dialog id="gameDlg" class="sheet">
+  <div class="sheet-head"><h2>Live games</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <div id="gameList" class="list"></div>
+</dialog>
+
+<dialog id="posDlg" class="sheet">
+  <div class="sheet-head"><h2>Positions</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <div id="posList" class="list"></div>
+</dialog>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
