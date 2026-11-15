@@ -25,11 +25,11 @@ const COLS = [5, 10, 30, 60];
 const COL_LABEL = { 5: "5s", 10: "10s", 30: "30s", 60: "1m" };
 const MAX_SPREAD = 0.1;
 const FONT = '"Geist", ui-sans-serif, system-ui, sans-serif';
-// Gemini's palette: near-black, cyan accent, their green and red.
-const ACCENT = "38,221,249", GREEN = "74,222,128", RED = "252,72,72";
+// Gemini's palette: near-black, the orange of their developer platform mark, their green and red.
+const ACCENT = "249,94,1", GREEN = "74,222,128", RED = "252,72,72";
 const C = {
-  grid: "rgba(255,255,255,0.075)", dot: [190, 240, 250],
-  mult: [150, 225, 240], label: "rgba(154,163,166,0.95)",
+  grid: "rgba(255,255,255,0.075)", dot: [255, 214, 190],
+  mult: [255, 176, 128], label: "rgba(154,163,166,0.95)",
   band: `rgba(${ACCENT},`, win: "#4ade80", loss: "#fc4848",
 };
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -42,7 +42,7 @@ const state = {
   positions: [], balance: 0, balanceShown: 0, limits: null,
   stake: 5, colSec: 10,
   clockSkew: 0, center: null,
-  thin: false, hover: null, press: null, ghosts: new Map(), stars: [], sizes: null,
+  thin: false, hover: null, press: null, zoom: clamp(Number(store.get("tapline.zoom")) || 1, 0.25, 1.5), pinch: null, ghosts: new Map(), stars: [], sizes: null,
   fx: [], over: [], marks: [], trail: [], ripples: [],
   shake: 0, flash: 0, flashColor: GREEN, headKick: 0,
   streak: 0, lastTick: 0, lastBeat: 0,
@@ -249,7 +249,7 @@ function tile(cx, cy, w, h, o) {
   const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
   g.addColorStop(0, `rgba(${o.bright ? "255,255,255" : tint},${o.bright ? 0.95 : 0.6})`);
   g.addColorStop(1, `rgba(${tint},${o.bright ? 0.75 : 0.24})`);
-  ctx.shadowColor = `rgba(${tint},0.95)`; ctx.shadowBlur = o.near ? 44 : 26;
+  ctx.shadowColor = `rgba(${tint},0.8)`; ctx.shadowBlur = o.near ? 30 : 14;
   ctx.fillStyle = g; rr(ctx, -w / 2, -h / 2, w, h, r); ctx.fill();
   ctx.shadowBlur = 0;
   // charge: fills toward the side the price has to come from
@@ -269,7 +269,7 @@ function tile(cx, cy, w, h, o) {
   ctx.strokeStyle = `rgba(${tint},0.9)`; ctx.lineWidth = 1; rr(ctx, -w / 2 - 2, -h / 2 - 2, w + 4, h + 4, r + 2); ctx.stroke();
   // text and countdown scale with the tile
   const bar = o.timeLeft != null, room = h - (bar ? 9 : 0);
-  const f1 = clamp(Math.round(room * 0.34), 13, 26), f2 = clamp(Math.round(room * 0.19), 9, 14);
+  const f1 = clamp(Math.round(room * (room < 36 ? 0.55 : 0.34)), 8, 26), f2 = clamp(Math.round(room * 0.19), 9, 14);
   const two = o.line2 && room >= 36;
   const top = -h / 2 + (room - (two ? f1 + f2 + 3 : f1)) / 2;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -280,7 +280,7 @@ function tile(cx, cy, w, h, o) {
   if (bar) {
     const bw = (w - 20) * clamp(o.timeLeft, 0, 1);
     ctx.fillStyle = "rgba(0,0,0,0.35)"; rr(ctx, -w / 2 + 10, h / 2 - 9, w - 20, 3.5, 2); ctx.fill();
-    ctx.fillStyle = o.timeLeft < 0.3 ? "#f9a631" : "#fff"; rr(ctx, -w / 2 + 10, h / 2 - 9, bw, 3.5, 2); ctx.fill();
+    ctx.fillStyle = o.timeLeft < 0.3 ? "#fc4848" : "#fff"; rr(ctx, -w / 2 + 10, h / 2 - 9, bw, 3.5, 2); ctx.fill();
   }
   ctx.restore();
 }
@@ -369,8 +369,9 @@ function draw(frame) {
 
   // Zoom to the spread: as close as possible while keeping ~4 tappable rows each side on screen.
   // Zoomed in: about three tappable rows each side of the spread, as large as the screen allows.
+  // state.zoom then scales that: below 1 shows more rows (further, higher-paying squares).
   const maxH = W < 560 ? 86 : 104;
-  const fitH = clamp(H / (Math.round((q.ask - q.bid) * 100) + 6.4), 34, maxH);
+  const fitH = clamp(clamp(H / (Math.round((q.ask - q.bid) * 100) + 6.4), 34, maxH) * state.zoom, 13, maxH * 1.5);
   CELL_H = state.center === null || reduceMotion ? fitH : CELL_H + (fitH - CELL_H) * 0.06;
 
   const mid = (q.bid + q.ask) / 2;
@@ -391,7 +392,7 @@ function draw(frame) {
     for (const st of state.stars) {
       st.x -= (st.v * 0.00042 * 1280) / Math.max(W, 320);
       if (st.x < -0.02) { st.x = 1.02; st.y = rand(0, 1); }
-      ctx.fillStyle = `rgba(190,245,255,${st.a})`;
+      ctx.fillStyle = `rgba(255,225,205,${st.a})`;
       ctx.beginPath(); ctx.arc(st.x * W, st.y * H, st.s, 0, Math.PI * 2); ctx.fill();
     }
   }
@@ -454,7 +455,7 @@ function draw(frame) {
       const hot = pressed || (hv && hv.col === c && hv.row === r);
       if (hot) {
         // Hover lifts a glass square off the grid; pressing pushes it in with a heavy outline.
-        const inset = pressed ? 8 : 4, rad = Math.min(16, CELL_H * 0.24);
+        const inset = Math.min(pressed ? 8 : 4, CELL_H * 0.12), rad = Math.min(16, CELL_H * 0.24);
         ctx.save();
         ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = pressed ? 8 : 20; ctx.shadowOffsetY = pressed ? 3 : 11;
         ctx.fillStyle = `rgba(${ACCENT},${pressed ? 0.34 : 0.16})`;
@@ -464,15 +465,28 @@ function draw(frame) {
         ctx.shadowBlur = 0;
         const hl = ctx.createLinearGradient(0, cy - CELL_H / 2, 0, cy);
         hl.addColorStop(0, "rgba(255,255,255,0.28)"); hl.addColorStop(1, "rgba(255,255,255,0)");
-        ctx.fillStyle = hl; rr(ctx, cx - CELL_W / 2 + inset + 2, cy - CELL_H / 2 + inset + 2, CELL_W - inset * 2 - 4, CELL_H * 0.42, rad - 2); ctx.fill();
+        ctx.fillStyle = hl; rr(ctx, cx - CELL_W / 2 + inset + 2, cy - CELL_H / 2 + inset + 2, CELL_W - inset * 2 - 4, CELL_H * 0.42, Math.max(rad - 2, 1)); ctx.fill();
         if (pressed) { ctx.strokeStyle = `rgba(${ACCENT},0.8)`; ctx.lineWidth = 1.5; rr(ctx, cx - CELL_W / 2 + 1.5, cy - CELL_H / 2 + 1.5, CELL_W - 3, CELL_H - 3, rad + 4); ctx.stroke(); }
         ctx.restore();
-        const fs = clamp(Math.round(CELL_H * 0.26), 14, 24);
-        ctx.fillStyle = "#ffffff"; ctx.font = `700 ${fs}px ${FONT}`;
-        ctx.fillText(plan.multiple.toFixed(2) + "x", cx, cy - fs * 0.42);
         const qty = Math.floor((state.stake / plan.entry) * 100) / 100;
-        ctx.fillStyle = C.win; ctx.font = `700 ${Math.max(11, Math.round(fs * 0.62))}px ${FONT}`;
-        ctx.fillText("+" + fmtMoney(qty * (plan.target - plan.entry)), cx, cy + fs * 0.55);
+        const gain = "+" + fmtMoney(qty * (plan.target - plan.entry));
+        if (CELL_H >= 40) {
+          const fs = clamp(Math.round(CELL_H * 0.26), 14, 24);
+          ctx.fillStyle = "#ffffff"; ctx.font = `700 ${fs}px ${FONT}`;
+          ctx.fillText(plan.multiple.toFixed(2) + "x", cx, cy - fs * 0.42);
+          ctx.fillStyle = C.win; ctx.font = `700 ${Math.max(11, Math.round(fs * 0.62))}px ${FONT}`;
+          ctx.fillText(gain, cx, cy + fs * 0.55);
+        } else {
+          // Row too short for two lines: show the payout in a tag above the square.
+          ctx.font = `700 ${clamp(Math.round(CELL_H * 0.5), 9, 15)}px ${FONT}`; ctx.fillStyle = "#fff";
+          ctx.fillText(plan.multiple.toFixed(2) + "x", cx, cy);
+          const tag = `${plan.multiple.toFixed(2)}x  ${gain}`;
+          ctx.font = `700 13px ${FONT}`;
+          const tw = ctx.measureText(tag).width + 16, ty = Math.max(14, cy - CELL_H / 2 - 16);
+          ctx.fillStyle = "rgba(6,10,12,0.92)"; ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 1;
+          rr(ctx, cx - tw / 2, ty - 11, tw, 22, 11); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = C.win; ctx.fillText(tag, cx, ty + 0.5);
+        }
       } else {
         // Bigger payouts read brighter; squares near the price shimmer.
         const heat = clamp((plan.multiple - 1) / 0.4, 0, 1);
@@ -480,7 +494,7 @@ function draw(frame) {
         const shimmer = reduceMotion ? 0 : near * 0.25 * (0.5 + 0.5 * Math.sin(frame / 260 + c * 0.9));
         const [cr, cg, cb] = C.mult;
         ctx.fillStyle = `rgba(${cr + (255 - cr) * heat * 0.6},${cg + (255 - cg) * heat * 0.6},${cb},${clamp((0.4 + 0.5 * heat + shimmer) * fadeIn, 0, 1)})`;
-        ctx.font = `${heat > 0.5 ? 700 : 600} ${clamp(Math.round(CELL_H * 0.2), 12, 19)}px ${FONT}`;
+        ctx.font = `${heat > 0.5 ? 700 : 600} ${clamp(Math.round(CELL_H * 0.42), 9, 16)}px ${FONT}`;
         ctx.fillText(plan.multiple.toFixed(2) + "X", cx, cy);
       }
     }
@@ -490,14 +504,15 @@ function draw(frame) {
     const msg = "Thin market: waiting for a two-sided price";
     ctx.font = `600 14px ${FONT}`; ctx.textAlign = "center";
     const mw = ctx.measureText(msg).width + 36, mx = nowX + (W - nowX) / 2, my = Math.max(40, H * 0.2);
-    ctx.fillStyle = "rgba(6,18,22,0.85)"; ctx.strokeStyle = "rgba(249,166,49,0.6)"; ctx.lineWidth = 1;
+    ctx.fillStyle = "rgba(6,18,22,0.85)"; ctx.strokeStyle = "rgba(255,209,102,0.6)"; ctx.lineWidth = 1;
     rr(ctx, mx - mw / 2, my - 18, mw, 36, 18); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "#f9a631"; ctx.fillText(msg, mx, my + 1);
+    ctx.fillStyle = "#ffd166"; ctx.fillText(msg, mx, my + 1);
   }
 
   // price scale and time labels
   ctx.font = `600 11px ${FONT}`; ctx.textAlign = "right";
-  for (let r = row0; r <= row1 + 1; r++) { ctx.fillStyle = C.label; ctx.fillText(cents(r / 100), W - 6, yOf(r / 100) - 10); }
+  const rowStep = CELL_H >= 22 ? 1 : CELL_H >= 15 ? 2 : 5; // thin the price scale when zoomed out
+  for (let r = row0; r <= row1 + 1; r++) { if (r % rowStep) continue; ctx.fillStyle = C.label; ctx.fillText(cents(r / 100), W - 6, yOf(r / 100) - Math.min(10, CELL_H / 2)); }
   ctx.textAlign = "center";
   const every = Math.max(1, Math.ceil(90 / CELL_W));
   for (let c = col0; c <= col1 + 1; c++) {
@@ -591,7 +606,7 @@ function draw(frame) {
     const s = reduceMotion ? 1 : age < 1 ? 0.6 + 0.4 * easeOutBack(clamp(age, 0, 1)) : 1;
     const jx = near && !reduceMotion ? Math.sin(frame / 25) * 1.6 : 0, jy = near && !reduceMotion ? Math.cos(frame / 31) * 1.2 : 0;
     const flick = left < 0.3 && !reduceMotion ? 0.85 + 0.15 * Math.sin(frame / 60) : 1;
-    tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 10, CELL_H - 10, {
+    tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
       scale: s, alpha: flick, charge, fromTop: p.side === "no", timeLeft: left, near,
       line1: "$" + Math.round(p.cost), line2: near ? "1¢ AWAY" : (p.multiple ? p.multiple.toFixed(2) + "X" : ""),
     });
@@ -599,7 +614,7 @@ function draw(frame) {
   for (const [key, g] of state.ghosts) {
     const [c, r] = key.split(":").map(Number);
     const age = clamp((frame - g.bornAt) / 220, 0, 1);
-    tile(xOf(c * colMs()) + CELL_W / 2, yOf((r + 1) / 100) + CELL_H / 2, CELL_W - 10, CELL_H - 10, {
+    tile(xOf(c * colMs()) + CELL_W / 2, yOf((r + 1) / 100) + CELL_H / 2, CELL_W - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
       scale: reduceMotion ? 1 : 1.35 - 0.35 * easeOutBack(age), alpha: 0.85, line1: "$" + g.stake, line2: g.multiple.toFixed(2) + "X",
     });
   }
@@ -694,7 +709,7 @@ function ripple(x, y, size = 260, life = 900) {
 function tapFx(box) {
   const t0 = performance.now(), time = box.deadline - colMs() / 2, price = (box.lo + box.hi) / 2;
   state.fx.push({ kind: "ring", t0, life: 450, time, price, rgb: ACCENT, size: 60, r0: 18, width: 3 });
-  if (!reduceMotion) for (let i = 0; i < 5; i++) state.fx.push({ kind: "spark", t0, life: rand(300, 500), time, price, a: rand(0, Math.PI * 2), dist: rand(26, 50), rgb: "200,250,255", g: 0, s: 2.4 });
+  if (!reduceMotion) for (let i = 0; i < 5; i++) state.fx.push({ kind: "spark", t0, life: rand(300, 500), time, price, a: rand(0, Math.PI * 2), dist: rand(26, 50), rgb: "255,220,195", g: 0, s: 2.4 });
   ripple(xOf(time), yOf(price), 160, 600);
 }
 
@@ -740,7 +755,7 @@ function winFx(p, amount, big) {
     state.over.push({ kind: "coin", i, t0: t0 + 120 + i * 60, life: 650 + rand(-80, 80), x0: x0 + rand(-14, 14), y0: y0 + rand(-10, 10), cx: (x0 + x1) / 2 + rand(-120, 120), cy: Math.min(y0, y1) - rand(60, 180), x1, y1 });
   }
   if (big) {
-    const colors = ["#4ade80", "#26ddf9", "#f9a631", "#ffffff"];
+    const colors = ["#4ade80", "#f95e01", "#ffd166", "#ffffff"];
     for (let i = 0; i < 40; i++) state.over.push({ kind: "confetti", t0, life: rand(1100, 1700), x: x0, y: y0, vx: rand(-1.1, 1.1), vy: rand(-1.4, -0.3), rot: rand(0, 6), spin: rand(-10, 10), color: colors[i % colors.length] });
   }
 }
@@ -768,13 +783,40 @@ function pointer(e) {
 canvas.addEventListener("pointermove", (e) => { state.hover = e.pointerType === "touch" ? null : pointer(e); });
 canvas.addEventListener("pointerleave", () => { state.hover = null; state.press = null; });
 canvas.addEventListener("pointercancel", () => { state.press = null; });
+function setZoom(z) {
+  state.zoom = clamp(z, 0.25, 1.5);
+  store.set("tapline.zoom", String(round2(state.zoom)));
+  const pct = $("zoomPct"); if (pct) pct.textContent = Math.round(state.zoom * 100) + "%";
+}
+const round2 = (n) => Math.round(n * 100) / 100;
+canvas.addEventListener("wheel", (e) => { e.preventDefault(); setZoom(state.zoom * Math.exp(-e.deltaY * 0.0016)); }, { passive: false });
+// Two fingers pinch to zoom; a pinch never places a trade.
+const touches = new Map();
+const spread2 = () => { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
 canvas.addEventListener("pointerdown", (e) => {
+  if (e.pointerType !== "touch") return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (touches.size === 2) { state.pinch = { d0: spread2(), z0: state.zoom }; state.press = null; }
+}, true);
+canvas.addEventListener("pointermove", (e) => {
+  if (!touches.has(e.pointerId)) return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (state.pinch && touches.size === 2) setZoom(state.pinch.z0 * (spread2() / state.pinch.d0));
+}, true);
+const endTouch = (e) => { touches.delete(e.pointerId); if (!touches.size && state.pinch) setTimeout(() => (state.pinch = null), 60); };
+canvas.addEventListener("pointercancel", endTouch, true);
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (state.pinch) return;
   const box = pointer(e);
   state.press = box ? { col: box.col, row: box.row } : null;
   if (box) { tone(300, 240, 0.05, "sine", 0.05); buzz(4); }
 });
 canvas.addEventListener("pointerup", async (e) => {
+  const pinched = !!state.pinch;
+  endTouch(e);
   state.press = null;
+  if (pinched) return;
   hideCoach();
   const box = pointer(e);
   if (!box || !state.contract) { if (state.quote) { sfx.deny(); buzz(6); } return; }
@@ -1043,6 +1085,9 @@ async function init() {
     state.sound = !state.sound; store.set("tapline.sound", state.sound ? "on" : "off");
     soundBtn.setAttribute("aria-pressed", String(state.sound)); sfx.tap(1.1);
   };
+  $("zoomOut").onclick = () => { setZoom(state.zoom / 1.3); sfx.tap(1.02); };
+  $("zoomIn").onclick = () => { setZoom(state.zoom * 1.3); sfx.tap(1.02); };
+  setZoom(state.zoom);
   $("gameBtn").onclick = () => { renderGameList(); $("gameDlg").showModal(); };
   $("posBtn").onclick = () => { $("posDlg").showModal(); renderPositions(); };
   for (const d of document.querySelectorAll("dialog")) {

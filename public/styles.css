@@ -1,9 +1,9 @@
-/* Palette and type follow Gemini's own site: near-black, cyan accent, their green and red, Geist. */
+/* Palette and type follow Gemini: near-black, the orange of their developer platform mark, their green and red, Geist. */
 :root {
   --bg0: #010304;
-  --bg1: #06161b;
-  --accent: #26ddf9;
-  --accent-rgb: 38 221 249;
+  --bg1: #140b06;
+  --accent: #f95e01;
+  --accent-rgb: 249 94 1;
   --glass: rgb(255 255 255 / .055);
   --glass-strong: rgb(255 255 255 / .09);
   --edge: rgb(255 255 255 / .14);
@@ -11,7 +11,7 @@
   --muted: #9aa3a6;
   --win: #4ade80;
   --loss: #fc4848;
-  --warn: #f9a631;
+  --warn: #ffd166;
   font-family: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
 }
 * { box-sizing: border-box; }
@@ -19,8 +19,8 @@ html, body { height: 100%; }
 body {
   margin: 0; color: var(--ink); overflow: hidden; height: 100dvh;
   background:
-    radial-gradient(1000px 640px at 28% 48%, rgb(var(--accent-rgb) / .13), transparent 70%),
-    radial-gradient(760px 520px at 92% 0%, rgb(var(--accent-rgb) / .08), transparent 70%),
+    radial-gradient(1000px 640px at 28% 48%, rgb(var(--accent-rgb) / .10), transparent 70%),
+    radial-gradient(760px 520px at 92% 0%, rgb(var(--accent-rgb) / .06), transparent 70%),
     linear-gradient(180deg, var(--bg1), var(--bg0) 62%);
   display: grid; grid-template-rows: auto auto auto 1fr auto; grid-template-columns: minmax(0, 1fr);
 }
@@ -37,7 +37,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .top { display: flex; align-items: center; gap: 12px; padding: 12px 16px 6px; min-width: 0; position: relative; z-index: 2; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 19px; letter-spacing: -.02em; }
-.mark { width: 18px; height: 18px; border-radius: 6px; background: linear-gradient(135deg, #c8f8ff, var(--accent)); box-shadow: 0 0 18px rgb(var(--accent-rgb) / .9); }
+.mark { width: 24px; height: 24px; flex: none; display: block; }
 .game-btn { display: flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 999px; min-width: 0; flex: 0 1 auto; font-weight: 600; transition: transform .12s; }
 .game-btn:active, .pos-btn:active, .icon-btn:active { transform: scale(.96); }
 #gameTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -95,7 +95,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes slideIn { from { opacity: 0; transform: translateX(-24px); } }
 @keyframes fadeOut { to { opacity: 0; transform: translateX(-12px); } }
 
-.streak { position: absolute; top: 14px; right: 56px; z-index: 3; font-weight: 700; font-size: 15px; letter-spacing: .04em; padding: 6px 14px; border-radius: 999px; color: #1a1200; background: linear-gradient(180deg, #ffe9b0, var(--warn)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .6), 0 0 22px rgb(249 166 49 / .7); opacity: 0; transform: scale(.6); transition: opacity .2s, transform .2s; pointer-events: none; }
+.streak { position: absolute; top: 14px; right: 56px; z-index: 3; font-weight: 700; font-size: 15px; letter-spacing: .04em; padding: 6px 14px; border-radius: 999px; color: #1a1200; background: linear-gradient(180deg, #fff0c2, var(--warn)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .6), 0 6px 16px rgb(0 0 0 / .4); opacity: 0; transform: scale(.6); transition: opacity .2s, transform .2s; pointer-events: none; }
 .streak.on { opacity: 1; transform: scale(1); }
 .streak.pop { animation: streakPop .45s cubic-bezier(.2, 1.6, .4, 1); }
 @keyframes streakPop { 0% { transform: scale(.5) rotate(-6deg); } 60% { transform: scale(1.25) rotate(3deg); } }
@@ -110,7 +110,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .seg { display: flex; border-radius: 999px; padding: 3px; }
 .seg button { padding: 7px 13px; border-radius: 999px; font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 600; white-space: nowrap; transition: color .15s, background .15s, transform .12s; }
 .seg button:active { transform: scale(.92); }
-.seg button[aria-pressed="true"] { background: linear-gradient(180deg, #d4faff, var(--accent)); color: #010304; box-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 0 16px rgb(var(--accent-rgb) / .55); }
+.seg button[aria-pressed="true"] { background: linear-gradient(180deg, #ff8a3d, var(--accent)); color: #fff; box-shadow: inset 0 1px 0 rgb(255 255 255 / .35); }
+.zoom { align-items: center; }
+.zoom button { padding: 7px 12px; font-size: 17px; line-height: 1; }
+.zoom span { min-width: 44px; text-align: center; font-size: 13px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .icon-btn { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 16px; transition: transform .12s; }
 .icon-btn[aria-pressed="false"] { color: var(--muted); text-decoration: line-through; }
 .pos-btn { margin-left: auto; flex: none; padding: 9px 15px; border-radius: 999px; white-space: nowrap; font-weight: 600; transition: transform .12s; }
@@ -140,6 +143,8 @@ button.row:hover { background: rgb(var(--accent-rgb) / .07); }
   .controls { padding-left: 12px; padding-right: 12px; gap: 8px; flex-wrap: wrap; overflow: visible; }
   .lbl, .mode { display: none; }
   .seg button { padding: 7px 8px; font-size: 13px; }
+  .zoom button { padding: 7px 10px; font-size: 16px; }
+  .zoom span { min-width: 38px; }
   .controls { row-gap: 6px; }
   .icon-btn { width: 34px; height: 34px; }
   .pos-btn { padding: 7px 12px; font-size: 14px; }
