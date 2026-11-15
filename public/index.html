@@ -15,7 +15,7 @@
   <div class="brand"><span class="mark"></span><span>TapLine</span></div>
   <button id="gameBtn" class="game-btn glass" aria-haspopup="dialog"><span class="live"></span><span id="gameTitle">Loading live games…</span><span class="caret">▾</span></button>
   <div class="spacer"></div>
-  <div class="wallet glass"><span class="mode" id="mode">PAPER</span><span id="balance">$0.00</span><span class="delta" id="delta"></span></div>
+  <div class="wallet glass" id="wallet"><span class="mode" id="mode">PAPER</span><span id="balance">$0.00</span><span class="delta" id="delta"></span></div>
 </header>
 
 <nav class="markets" id="markets" aria-label="Markets"></nav>
@@ -25,7 +25,14 @@
   <canvas id="grid" aria-label="Live odds grid. Tap a box to trade."></canvas>
   <div class="empty" id="empty">Loading live games from Gemini…</div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div class="streak" id="streak" aria-live="polite"></div>
+  <div class="activity" id="activity" aria-label="Live moves in this game"></div>
+  <div class="coach" id="coach" hidden>
+    <b>Tap any square.</b> It pays if the price reaches it before its column passes the line.
+    <span>Above the line, the bottom of the glowing band has to reach the square. Below, the top does.</span>
+  </div>
 </main>
+<canvas id="fx" aria-hidden="true"></canvas>
 
 <footer class="controls">
   <div class="group" role="group" aria-label="Amount per tap">

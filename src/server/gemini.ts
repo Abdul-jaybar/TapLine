@@ -12,8 +12,10 @@ const MAX_SPREAD = 0.1;
 
 export interface Quote {
   symbol: string;
-  bid: number;
-  ask: number;
+  /** Best bid for YES, or null when nobody is bidding. */
+  bid: number | null;
+  /** Best ask for YES, or null when nobody is offering. */
+  ask: number | null;
   bidSize: number;
   askSize: number;
   /** Milliseconds since epoch. */
@@ -127,10 +129,25 @@ export interface Tick {
   ask: number;
 }
 
+/** A contract's price moved by at least a cent. */
+export interface Move {
+  symbol: string;
+  from: number;
+  to: number;
+  t: number;
+}
+
+/** A quote both sides of which are present and close enough to draw as a price. */
+export const isDrawable = (q: { bid: number | null; ask: number | null }): q is { bid: number; ask: number } =>
+  q.bid !== null && q.ask !== null && q.bid > 0 && q.ask < 1 && q.bid < q.ask && q.ask - q.bid <= MAX_SPREAD;
+
 /**
  * One WebSocket to Gemini carrying best bid/ask for every subscribed contract.
- * Emits "quote" for each update and keeps a short history per symbol so a
- * chart has a line to draw as soon as it opens.
+ *
+ * Emits "quote" for every update, including one-sided ones (a side with no
+ * orders is null): a resting order can still fill against the side that is
+ * there. Only drawable quotes go into the chart history, and a "move" is
+ * emitted when a contract's drawable mid changes by a cent or more.
  */
 export class Feed extends EventEmitter {
   private ws: WebSocket | null = null;
@@ -142,6 +159,7 @@ export class Feed extends EventEmitter {
   connected = false;
 
   start() {
+    this.setMaxListeners(0);
     this.connect();
   }
 
@@ -164,9 +182,9 @@ export class Feed extends EventEmitter {
 
   private send(method: "SUBSCRIBE" | "UNSUBSCRIBE", symbols: string[]) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
-    // Gemini accepts large subscribe lists, but keep each frame modest.
-    for (let i = 0; i < symbols.length; i += 100) {
-      const params = symbols.slice(i, i + 100).map((s) => `${s}@bookTicker`);
+    // Small frames: one bad symbol or an oversized frame shouldn't sink the rest.
+    for (let i = 0; i < symbols.length; i += 25) {
+      const params = symbols.slice(i, i + 25).map((s) => `${s}@bookTicker`);
       this.ws.send(JSON.stringify({ id: this.nextId++, method, params }));
     }
   }
@@ -179,9 +197,10 @@ export class Feed extends EventEmitter {
 
   /** Seed a quote from REST so a contract has a price before its first WebSocket update. */
   seed(symbol: string, bid: number | null, ask: number | null) {
-    if (bid === null || ask === null || this.quotes.has(symbol)) return;
-    if (!(bid > 0 && ask < 1 && bid < ask && ask - bid <= MAX_SPREAD)) return;
-    this.record({ symbol, bid, ask, bidSize: 0, askSize: 0, t: Date.now() });
+    if (this.quotes.has(symbol)) return;
+    const q = { bid: bid && bid > 0 ? bid : null, ask: ask && ask < 1 ? ask : null };
+    if (!isDrawable(q)) return;
+    this.record({ symbol, ...q, bidSize: 0, askSize: 0, t: Date.now() });
   }
 
   private onMessage(text: string) {
@@ -192,24 +211,29 @@ export class Feed extends EventEmitter {
       return;
     }
     if (!j.s || j.b === undefined || j.a === undefined) return;
-    const bid = Number(j.b);
-    const ask = Number(j.a);
-    // An empty side of the book arrives as 0; a quote needs both sides to be tradable.
-    if (!(bid > 0 && ask > 0 && ask < 1 && bid < ask)) return;
-    // When one side of the book is pulled for a moment the quote gaps wide open. That isn't a
-    // price anyone can trade at, so keep the last real quote instead of drawing a spike.
-    if (ask - bid > MAX_SPREAD) return;
+    const b = Number(j.b);
+    const a = Number(j.a);
+    // An empty side arrives as 0 (or 1 for the ask); keep the side that has orders.
+    const bid = b > 0 && b < 1 ? b : null;
+    const ask = a > 0 && a < 1 ? a : null;
+    if (bid !== null && ask !== null && bid >= ask) return;
     this.record({ symbol: j.s.toUpperCase(), bid, ask, bidSize: Number(j.B ?? 0), askSize: Number(j.A ?? 0), t: Date.now() });
   }
 
   private record(q: Quote) {
     this.quotes.set(q.symbol, q);
-    let h = this.history.get(q.symbol);
-    if (!h) this.history.set(q.symbol, (h = []));
-    const last = h.at(-1);
-    if (!last || last.bid !== q.bid || last.ask !== q.ask) {
-      h.push({ t: q.t, bid: q.bid, ask: q.ask });
-      if (h.length > 4000) h.splice(0, h.length - 4000);
+    if (isDrawable(q)) {
+      let h = this.history.get(q.symbol);
+      if (!h) this.history.set(q.symbol, (h = []));
+      const last = h.at(-1);
+      if (!last || last.bid !== q.bid || last.ask !== q.ask) {
+        h.push({ t: q.t, bid: q.bid, ask: q.ask });
+        if (h.length > 4000) h.splice(0, h.length - 4000);
+        if (last) {
+          const from = (last.bid + last.ask) / 2, to = (q.bid + q.ask) / 2;
+          if (Math.abs(to - from) >= 0.01 - 1e-9) this.emit("move", { symbol: q.symbol, from, to, t: q.t } satisfies Move);
+        }
+      }
     }
     this.emit("quote", q);
   }

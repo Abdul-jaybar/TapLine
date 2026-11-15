@@ -20,11 +20,13 @@ Gemini contracts settle at the end of the game, not in 30 seconds, so a box is a
 
 | You tap | Orders |
 |---|---|
-| A box above the line | Buy YES now, rest a sell at the box's near edge |
-| A box below the line | Buy NO now, rest a sell where YES falls to the box's near edge |
+| A box above the line | Buy YES now, rest a sell at the box's near edge. Hit when the YES bid reaches it |
+| A box below the line | Buy NO now, rest a sell where YES falls to the box's near edge. Hit when the YES ask falls to it |
 | The deadline passes | Cancel the resting sell, exit at the market |
 
 The number in each box is the payout multiple if it hits: target price divided by entry price.
+
+The chart draws the bid/ask band, not just the middle line, because hits are judged on the band's edges: when the spread is wide, the middle line can cross a box that nobody would actually buy from you at. A miss says how close it got ("Missed by 2¢").
 
 ## Run it
 
@@ -49,7 +51,8 @@ npm test
 | Live games, markets and contracts from Gemini | Working, live production data |
 | Real-time prices over Gemini's WebSocket | Working |
 | Grid, tap to trade, positions, timeouts | Working, checked in a browser at desktop and phone sizes |
-| Tile animations, win and miss effects, sounds | Working. Sounds are synthesized in the browser and can be muted |
+| Tile animations, win and miss effects, sounds, vibration | Working. Sounds are synthesized in the browser and can be muted. Vibration works on Android; iPhones don't support it in the browser |
+| Live moves from the rest of the game | Working: every 1¢ move in the game's main markets shows as a pill you can tap to jump to |
 | Tap engine (entry, target, deadline, limits) | Working, covered by `npm test` |
 | Order fills | Paper: filled at the live best bid/ask, starting balance $1,000 |
 | Real Gemini orders | Not built yet. `Broker` in `engine.ts` is the interface to implement |

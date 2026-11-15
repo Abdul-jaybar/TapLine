@@ -9,8 +9,13 @@ const T0 = 1_000_000;
 function setup(bid = 0.6, ask = 0.61, balance = 1000) {
   const q: Quote = { symbol: SYM, bid, ask, bidSize: 100, askSize: 100, t: T0 };
   const quoteOf = (s: string) => (s === SYM ? q : undefined);
+  const origOnQuote = (qq: Quote, t: number) => {
+    // Route every quote through the shared object so the paper broker prices off it.
+    q.bid = qq.bid; q.ask = qq.ask; q.t = qq.t;
+    return t;
+  };
   const acct = new Account(balance, new PaperBroker(quoteOf), quoteOf);
-  const move = (b: number, a: number, t = T0) => {
+  const move = (b: number | null, a: number | null, t = T0) => {
     q.bid = b;
     q.ask = a;
     q.t = t;
@@ -18,6 +23,8 @@ function setup(bid = 0.6, ask = 0.61, balance = 1000) {
   };
   const tap = (lo: number, hi: number, stake = 10, deadline = T0 + 60_000) =>
     acct.tap({ symbol: SYM, label: "Home", lo, hi, deadline, stake }, T0);
+  const onQuote = acct.onQuote.bind(acct);
+  acct.onQuote = (qq: Quote, t = Date.now()) => { origOnQuote(qq, t); onQuote(q, t); };
   return { acct, move, tap };
 }
 
@@ -121,6 +128,46 @@ test("exposure cap", async () => {
   const { tap } = setup();
   for (let i = 0; i < 5; i++) await tap(0.65, 0.66, 100);
   await assert.rejects(tap(0.65, 0.66, 100), /capped/);
+});
+
+test("one-sided quote: a NO position still fills when only the ask is there", async () => {
+  const { acct, tap } = setup();
+  const p = await tap(0.54, 0.55); // NO, hit when YES ask <= 0.55
+  acct.onQuote({ symbol: SYM, bid: null, ask: 0.55, bidSize: 0, askSize: 10, t: T0 }, T0);
+  await acct.idle();
+  assert.equal(p.status, "won");
+});
+
+test("wide spread: the mid crossing the box is not a hit, the bid has to get there", async () => {
+  const { acct, move, tap } = setup();
+  const p = await tap(0.65, 0.66);
+  move(0.6, 0.72); // mid 0.66 is inside the box, but nobody bids 0.65
+  await acct.idle();
+  assert.equal(p.status, "open");
+  assert.equal(p.best, 0.6);
+  move(0.64, 0.7);
+  await acct.idle();
+  assert.equal(p.best, 0.64); // closest it got: 1 cent short
+});
+
+test("deadline with nobody bidding waits instead of selling at zero", async () => {
+  const { acct, tap } = setup();
+  const p = await tap(0.65, 0.66);
+  acct.onQuote({ symbol: SYM, bid: null, ask: 0.7, bidSize: 0, askSize: 10, t: T0 + 60_000 }, T0 + 60_000);
+  acct.sweep(T0 + 60_000);
+  await acct.idle();
+  assert.equal(p.status, "open");
+  acct.onQuote({ symbol: SYM, bid: 0.59, ask: 0.6, bidSize: 10, askSize: 10, t: T0 + 61_000 }, T0 + 61_000);
+  acct.sweep(T0 + 61_000);
+  await acct.idle();
+  assert.equal(p.status, "expired");
+  assert.equal(p.exit, 0.59);
+});
+
+test("one-sided market refuses new taps", async () => {
+  const { acct, tap } = setup();
+  acct.onQuote({ symbol: SYM, bid: null, ask: 0.61, bidSize: 0, askSize: 10, t: T0 }, T0);
+  await assert.rejects(tap(0.65, 0.66), /one-sided/);
 });
 
 test("planTap multiple matches what a hit pays", () => {

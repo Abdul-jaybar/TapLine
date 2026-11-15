@@ -15,6 +15,11 @@ import type { Quote } from "./gemini.ts";
  *
  * So a hit pays the move from entry to the box; a miss is not a total loss, it
  * exits at whatever the market is at the deadline.
+ *
+ * A box above the line is hit when the YES *bid* reaches it (someone will buy
+ * from you there); a box below when the YES *ask* falls to it. The chart's mid
+ * line can cross a box before that when the spread is wide, which is why the
+ * client draws the bid/ask band and each position tracks how close it got.
  */
 
 const round = (n: number, dp: number) => Math.round(n * 10 ** dp) / 10 ** dp;
@@ -38,6 +43,8 @@ export interface Position {
   quantity: number;
   /** Price paid per contract for `side`. */
   entry: number;
+  /** Best price this position could have sold at while open (for "missed by" messages). */
+  best: number;
   /** Resting sell price for `side`. */
   target: number;
   cost: number;
@@ -74,9 +81,10 @@ export interface Broker {
   sell(symbol: string, side: Side, quantity: number, limit: number): Promise<Fill>;
 }
 
-/** Bid/ask for the NO side, derived from the YES book. */
-export function sideQuote(q: Quote, side: Side) {
-  return side === "yes" ? { bid: q.bid, ask: q.ask } : { bid: px(1 - q.ask), ask: px(1 - q.bid) };
+/** Bid/ask for one side, derived from the YES book. A missing side is null. */
+export function sideQuote(q: Pick<Quote, "bid" | "ask">, side: Side): { bid: number | null; ask: number | null } {
+  if (side === "yes") return { bid: q.bid, ask: q.ask };
+  return { bid: q.ask === null ? null : px(1 - q.ask), ask: q.bid === null ? null : px(1 - q.bid) };
 }
 
 export class PaperBroker implements Broker {
@@ -91,12 +99,14 @@ export class PaperBroker implements Broker {
 
   async buy(symbol: string, side: Side, quantity: number, limit: number): Promise<Fill> {
     const { ask } = this.book(symbol, side);
+    if (ask === null) throw new TapError("no sellers right now");
     if (ask > limit + 1e-9) throw new TapError("price moved, tap again");
     return { price: ask, quantity };
   }
 
   async sell(symbol: string, side: Side, quantity: number, limit: number): Promise<Fill> {
     const { bid } = this.book(symbol, side);
+    if (bid === null) throw new TapError("no buyers right now");
     if (bid < limit - 1e-9) throw new TapError("no buyer at that price right now");
     return { price: bid, quantity };
   }
@@ -124,7 +134,8 @@ export const DEFAULT_LIMITS: Limits = {
 };
 
 /** Plan a tap against a quote. Pure, so the UI's payout labels and the engine agree. */
-export function planTap(q: Quote, lo: number, hi: number, stake: number) {
+export function planTap(q: Pick<Quote, "bid" | "ask">, lo: number, hi: number, stake: number) {
+  if (q.bid === null || q.ask === null) throw new TapError("the market is one-sided right now, try again in a moment");
   let side: Side;
   let target: number;
   if (lo >= q.ask + 0.01 - 1e-9) {
@@ -136,7 +147,7 @@ export function planTap(q: Quote, lo: number, hi: number, stake: number) {
   } else {
     throw new TapError("that box is on the line, pick one further away");
   }
-  const entry = sideQuote(q, side).ask;
+  const entry = sideQuote(q, side).ask!;
   if (!(entry > 0 && entry < 1) || !(target > entry && target < 1)) throw new TapError("no room to profit in that box");
   const quantity = qtyFloor(stake / entry);
   if (quantity < 0.01) throw new TapError("stake too small for this price");
@@ -205,6 +216,7 @@ export class Account {
         quantity: fill.quantity,
         entry: fill.price,
         target: plan.target,
+        best: sideQuote(q, plan.side).bid ?? 0,
         cost,
         status: "open",
         openedAt: now,
@@ -230,13 +242,20 @@ export class Account {
   onQuote(q: Quote, now = Date.now()) {
     for (const p of this.positions) {
       if (p.status !== "open" || p.symbol !== q.symbol) continue;
-      if (sideQuote(q, p.side).bid >= p.target - 1e-9) {
+      const bid = sideQuote(q, p.side).bid;
+      if (bid === null) continue;
+      if (bid > p.best) p.best = bid;
+      if (bid >= p.target - 1e-9) {
         void this.run(() => this.settle(p, "won", p.target, now)).catch(() => {});
       }
     }
   }
 
-  /** Call on a timer: exits positions whose deadline has passed, at the market. */
+  /**
+   * Call on a timer: exits positions whose deadline has passed, at the market.
+   * If nobody is bidding at that moment the sell fails and is retried on the
+   * next sweep, so a position is never dumped into an empty book at zero.
+   */
   sweep(now = Date.now()) {
     for (const p of this.positions) {
       if (p.status !== "open" || now < p.deadline) continue;

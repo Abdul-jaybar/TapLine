@@ -3,7 +3,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { Account, DEFAULT_LIMITS, PaperBroker, TapError, type Position } from "./engine.ts";
-import { Feed, fetchLiveGames, type Game, type Quote } from "./gemini.ts";
+import { Feed, fetchLiveGames, type Game, type Move, type Quote } from "./gemini.ts";
 
 const feed = new Feed();
 feed.start();
@@ -63,6 +63,19 @@ const knownContract = (symbol: string) => {
   return undefined;
 };
 
+/** The contracts of a game whose moves we stream as live activity, main markets first. */
+function gameContracts(gameId: string, cap = 160) {
+  const g = games.find((x) => x.id === gameId);
+  const out = new Map<string, { market: string; label: string }>();
+  for (const m of g?.markets ?? []) {
+    for (const c of m.contracts) {
+      if (out.size >= cap) break;
+      if (c.bid !== null || c.ask !== null) out.set(c.symbol, { market: m.name, label: c.label });
+    }
+  }
+  return out;
+}
+
 const app = new Hono();
 
 app.get("/api/games", (c) => c.json({ games, error: games.length ? null : gamesError, loading: !games.length && !gamesError }));
@@ -121,6 +134,9 @@ app.get("/api/stream", (c) => {
   if (!SESSION_ID.test(sid) || !SYMBOL.test(symbol) || !knownContract(symbol)) return c.json({ error: "bad request" }, 400);
   feed.subscribe([symbol]);
   const session = sessionFor(sid);
+  // Every real price move anywhere in this game, so the screen shows the game's action.
+  const activity = gameContracts(c.req.query("game") ?? "");
+  feed.subscribe([...activity.keys()]);
 
   return streamSSE(c, async (stream) => {
     const send = (event: string, data: unknown) => void stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {});
@@ -128,13 +144,19 @@ app.get("/api/stream", (c) => {
     const onQuote = (q: Quote) => {
       if (q.symbol === symbol) send("quote", { t: q.t, bid: q.bid, ask: q.ask });
     };
+    const onMove = (m: Move) => {
+      const info = activity.get(m.symbol);
+      if (info) send("move", { ...m, ...info });
+    };
     const onPosition: Listener = (event, data) => send(event, data);
     feed.on("quote", onQuote);
+    feed.on("move", onMove);
     session.listeners.add(onPosition);
     const beat = setInterval(() => send("ping", { now: Date.now(), feed: feed.connected }), 5000);
     await new Promise<void>((resolve) => stream.onAbort(resolve));
     clearInterval(beat);
     feed.off("quote", onQuote);
+    feed.off("move", onMove);
     session.listeners.delete(onPosition);
   });
 });
