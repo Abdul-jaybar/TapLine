@@ -77,3 +77,7 @@ Ambient motion (drifting motes, the light running along the line, the sweep acro
 - `src/server/index.ts`: HTTP API and the per-browser event stream
 - `public/`: the grid UI (plain JavaScript on a canvas, no build step)
 - `test/engine.test.ts`: engine tests
+
+## Demo video
+
+`demo/` holds what built the one-minute demo: `record.cjs` captures real footage of the app on a live game (it taps real squares and logs the real outcomes; nothing is simulated), `cards.cjs` renders the title cards and captions, `sfx.py` recreates the app's sound cues at the real event times (screen capture has no audio), and `build.sh` cuts it together with the voiceover. The voiceover was generated with Higgsfield.

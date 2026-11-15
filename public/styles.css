@@ -147,6 +147,8 @@ button.row:hover { background: rgb(var(--accent-rgb) / .07); }
   /* Phones: one slim pill at the top, so the bottom rows stay tappable. */
   .activity { top: 8px; bottom: auto; left: 12px; right: 12px; max-width: none; }
   .move:not(:first-child) { display: none; }
+  /* It overlaps the top row of squares here, so let taps pass through to the grid. */
+  .move { pointer-events: none; }
   .toasts { top: 52px; }
   .coach { bottom: 60px; }
 }
