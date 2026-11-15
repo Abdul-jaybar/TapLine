@@ -3,15 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#030816">
 <title>TapLine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="mark"></span>TapLine</div>
-  <button id="gameBtn" class="game-btn" aria-haspopup="dialog"><span id="gameTitle">Loading live games…</span><span class="caret">▾</span></button>
+  <div class="brand"><span class="mark"></span><span>TapLine</span></div>
+  <button id="gameBtn" class="game-btn glass" aria-haspopup="dialog"><span class="live"></span><span id="gameTitle">Loading live games…</span><span class="caret">▾</span></button>
   <div class="spacer"></div>
-  <div class="wallet"><span class="mode" id="mode">PAPER</span><span id="balance">$0.00</span></div>
+  <div class="wallet glass"><span class="mode" id="mode">PAPER</span><span id="balance">$0.00</span><span class="delta" id="delta"></span></div>
 </header>
 
 <nav class="markets" id="markets" aria-label="Markets"></nav>
@@ -26,13 +30,14 @@
 <footer class="controls">
   <div class="group" role="group" aria-label="Amount per tap">
     <span class="lbl">Per tap</span>
-    <div id="stakes" class="seg"></div>
+    <div id="stakes" class="seg glass"></div>
   </div>
   <div class="group" role="group" aria-label="Time per column">
     <span class="lbl">Column</span>
-    <div id="cols" class="seg"></div>
+    <div id="cols" class="seg glass"></div>
   </div>
-  <button id="posBtn" class="pos-btn">Positions <span id="posCount">0</span></button>
+  <button id="soundBtn" class="icon-btn glass" aria-label="Sound" aria-pressed="true">♪</button>
+  <button id="posBtn" class="pos-btn glass">Positions <span id="posCount">0</span></button>
 </footer>
 
 <dialog id="gameDlg" class="sheet">

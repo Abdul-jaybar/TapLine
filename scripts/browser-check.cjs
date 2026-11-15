@@ -21,15 +21,15 @@ const { chromium } = require("playwright");
   // Tap a box above the line and one below, two columns ahead of the present.
   const box = await page.locator("#grid").boundingBox();
   const narrow = box.width < 560;
-  const colW = narrow ? 76 : 96;
-  const x = box.x + box.width * (narrow ? 0.28 : 0.4) + colW * 2.5;
-  for (const dy of [-44 * 2.5, 44 * 2.5]) {
+  const colW = narrow ? 58 : 68, rowH = narrow ? 52 : 58;
+  const x = box.x + box.width * (narrow ? 0.26 : 0.36) + colW * 2.5;
+  for (const dy of [-rowH * 2.5, rowH * 2.5]) {
     await page.mouse.move(x, box.y + box.height / 2 + dy);
     await page.waitForTimeout(150);
     await page.mouse.click(x, box.y + box.height / 2 + dy);
     await page.waitForTimeout(500);
   }
-  await page.mouse.move(x + colW, box.y + box.height / 2 - 44 * 3.5);
+  await page.mouse.move(x + colW, box.y + box.height / 2 - rowH * 3.5);
   await page.waitForTimeout(400);
   console.log("after taps: balance", await page.locator("#balance").innerText(), "| open", await page.locator("#posCount").innerText());
   console.log("toasts:", await page.locator(".toast").allInnerTexts());

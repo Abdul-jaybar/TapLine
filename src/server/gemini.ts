@@ -7,6 +7,9 @@ import { EventEmitter } from "node:events";
 const REST = process.env.GEMINI_BASE_URL ?? "https://api.gemini.com";
 const WS = process.env.GEMINI_WS_URL ?? "wss://ws.gemini.com";
 
+/** Quotes wider than this are treated as "no market right now". */
+const MAX_SPREAD = 0.1;
+
 export interface Quote {
   symbol: string;
   bid: number;
@@ -177,6 +180,7 @@ export class Feed extends EventEmitter {
   /** Seed a quote from REST so a contract has a price before its first WebSocket update. */
   seed(symbol: string, bid: number | null, ask: number | null) {
     if (bid === null || ask === null || this.quotes.has(symbol)) return;
+    if (!(bid > 0 && ask < 1 && bid < ask && ask - bid <= MAX_SPREAD)) return;
     this.record({ symbol, bid, ask, bidSize: 0, askSize: 0, t: Date.now() });
   }
 
@@ -192,6 +196,9 @@ export class Feed extends EventEmitter {
     const ask = Number(j.a);
     // An empty side of the book arrives as 0; a quote needs both sides to be tradable.
     if (!(bid > 0 && ask > 0 && ask < 1 && bid < ask)) return;
+    // When one side of the book is pulled for a moment the quote gaps wide open. That isn't a
+    // price anyone can trade at, so keep the last real quote instead of drawing a spike.
+    if (ask - bid > MAX_SPREAD) return;
     this.record({ symbol: j.s.toUpperCase(), bid, ask, bidSize: Number(j.B ?? 0), askSize: Number(j.A ?? 0), t: Date.now() });
   }
 

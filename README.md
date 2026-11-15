@@ -49,6 +49,7 @@ npm test
 | Live games, markets and contracts from Gemini | Working, live production data |
 | Real-time prices over Gemini's WebSocket | Working |
 | Grid, tap to trade, positions, timeouts | Working, checked in a browser at desktop and phone sizes |
+| Tile animations, win and miss effects, sounds | Working. Sounds are synthesized in the browser and can be muted |
 | Tap engine (entry, target, deadline, limits) | Working, covered by `npm test` |
 | Order fills | Paper: filled at the live best bid/ask, starting balance $1,000 |
 | Real Gemini orders | Not built yet. `Broker` in `engine.ts` is the interface to implement |
