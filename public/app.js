@@ -24,17 +24,17 @@ const STAKES = [1, 5, 10, 25];
 const COLS = [5, 10, 30, 60];
 const COL_LABEL = { 5: "5s", 10: "10s", 30: "30s", 60: "1m" };
 const MAX_SPREAD = 0.1;
-const FONT = '"Space Grotesk", ui-sans-serif, system-ui, sans-serif';
+const FONT = '"Geist", ui-sans-serif, system-ui, sans-serif';
+// Gemini's palette: near-black, cyan accent, their green and red.
+const ACCENT = "38,221,249", GREEN = "74,222,128", RED = "252,72,72";
 const C = {
-  grid: "rgba(110,160,255,0.12)", dot: [150, 195, 255],
-  mult: [120, 175, 255], label: "rgba(127,156,207,0.9)",
-  tileTop: "#e8fbff", tileBot: "#5ccbff", tileGlow: "rgba(70,185,255,0.95)", tileInk: "#04142e",
-  line: "#f4faff", lineGlow: "rgba(90,190,255,0.95)", band: "rgba(120,200,255,",
-  win: "#7dffc5", loss: "#ff7d8f", gold: "#ffd166",
+  grid: "rgba(255,255,255,0.075)", dot: [190, 240, 250],
+  mult: [150, 225, 240], label: "rgba(154,163,166,0.95)",
+  band: `rgba(${ACCENT},`, win: "#4ade80", loss: "#fc4848",
 };
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-let CELL_W = 80, CELL_H = 74, NOW_AT = 0.34;
+let CELL_W = 108, CELL_H = 96, NOW_AT = 0.3;
 
 const state = {
   games: [], game: null, market: null, contract: null,
@@ -42,9 +42,9 @@ const state = {
   positions: [], balance: 0, balanceShown: 0, limits: null,
   stake: 5, colSec: 10,
   clockSkew: 0, center: null,
-  hover: null, ghosts: new Map(),
+  thin: false, hover: null, press: null, ghosts: new Map(), stars: [], sizes: null,
   fx: [], over: [], marks: [], trail: [], ripples: [],
-  shake: 0, flash: 0, flashColor: "125,255,197", headKick: 0,
+  shake: 0, flash: 0, flashColor: GREEN, headKick: 0,
   streak: 0, lastTick: 0, lastBeat: 0,
   source: null, sound: store.get("tapline.sound") !== "off",
 };
@@ -145,7 +145,7 @@ function setStreak(n) {
 // ---------- tap maths (mirrors planTap on the server) ----------
 function planBox(lo, hi) {
   const q = state.quote;
-  if (!q) return null;
+  if (!q || state.thin) return null; // thin market: the server would refuse, so offer nothing
   const EPS = 1e-9;
   let side, entry, target;
   if (lo >= q.ask + 0.01 - EPS) { side = "yes"; entry = q.ask; target = lo; }
@@ -167,7 +167,7 @@ function resize() {
   const r = canvas.getBoundingClientRect();
   W = r.width; H = r.height;
   const narrow = W < 560;
-  CELL_W = narrow ? 62 : 80; NOW_AT = narrow ? 0.24 : 0.34;
+  CELL_W = narrow ? 78 : 108; NOW_AT = narrow ? 0.2 : 0.3;
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   FW = innerWidth; FH = innerHeight;
@@ -205,49 +205,72 @@ function rr(c, x, y, w, h, r) {
 }
 
 /**
- * A glowing tile centred on (cx, cy).
- * o: { scale, alpha, top, bottom, glow, line1, line2, charge, fromTop, timeLeft, near }
+ * A glass tile centred on (cx, cy): cast shadow, tinted translucent body, lit top edge, bright outline.
+ * o: { scale, alpha, tint, bright, line1, line2, charge, fromTop, timeLeft, near }
  */
 function tile(cx, cy, w, h, o) {
   const alpha = o.alpha ?? 1;
   if (alpha <= 0) return;
+  const tint = o.tint ?? ACCENT, r = Math.min(16, h * 0.24);
   ctx.save();
   ctx.translate(cx, cy); ctx.scale(o.scale ?? 1, o.scale ?? 1); ctx.globalAlpha = alpha;
+  // cast shadow, offset down as if lit from above
+  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 12;
+  ctx.fillStyle = "rgba(1,8,10,0.55)"; rr(ctx, -w / 2, -h / 2, w, h, r); ctx.fill();
+  ctx.shadowOffsetY = 0;
+  // glow and tinted glass body
   const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
-  g.addColorStop(0, o.top ?? C.tileTop); g.addColorStop(1, o.bottom ?? C.tileBot);
-  ctx.shadowColor = o.glow ?? C.tileGlow; ctx.shadowBlur = o.near ? 40 : 26;
-  ctx.fillStyle = g; rr(ctx, -w / 2, -h / 2, w, h, 12); ctx.fill();
+  g.addColorStop(0, `rgba(${o.bright ? "255,255,255" : tint},${o.bright ? 0.95 : 0.6})`);
+  g.addColorStop(1, `rgba(${tint},${o.bright ? 0.75 : 0.24})`);
+  ctx.shadowColor = `rgba(${tint},0.95)`; ctx.shadowBlur = o.near ? 44 : 26;
+  ctx.fillStyle = g; rr(ctx, -w / 2, -h / 2, w, h, r); ctx.fill();
   ctx.shadowBlur = 0;
-  // Charge: fills toward the side the price has to come from.
+  // charge: fills toward the side the price has to come from
   if (o.charge > 0) {
-    ctx.save(); rr(ctx, -w / 2, -h / 2, w, h, 12); ctx.clip();
+    ctx.save(); rr(ctx, -w / 2, -h / 2, w, h, r); ctx.clip();
     const ch = h * o.charge;
     const cg = ctx.createLinearGradient(0, o.fromTop ? -h / 2 : h / 2, 0, o.fromTop ? -h / 2 + ch : h / 2 - ch);
-    cg.addColorStop(0, "rgba(255,255,255,0.85)"); cg.addColorStop(1, "rgba(255,255,255,0.25)");
-    ctx.fillStyle = cg;
-    ctx.fillRect(-w / 2, o.fromTop ? -h / 2 : h / 2 - ch, w, ch);
+    cg.addColorStop(0, "rgba(255,255,255,0.8)"); cg.addColorStop(1, `rgba(${tint},0.35)`);
+    ctx.fillStyle = cg; ctx.fillRect(-w / 2, o.fromTop ? -h / 2 : h / 2 - ch, w, ch);
     ctx.restore();
   }
-  ctx.fillStyle = "rgba(255,255,255,0.32)"; rr(ctx, -w / 2 + 2, -h / 2 + 2, w - 4, h * 0.4, 10); ctx.fill();
-  // Text and countdown scale with the tile, which shrinks when the view zooms out.
-  const bar = o.timeLeft != null, room = h - (bar ? 7 : 0);
-  const f1 = clamp(Math.round(room * 0.36), 12, 17), f2 = clamp(Math.round(room * 0.24), 9, 11);
-  const two = o.line2 && room >= 34;
-  const top = -h / 2 + (room - (two ? f1 + f2 + 2 : f1)) / 2;
-  ctx.fillStyle = C.tileInk; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.font = `700 ${f1}px ${FONT}`; ctx.fillText(o.line1 ?? "", 0, top + f1 / 2);
-  if (two) { ctx.globalAlpha = alpha * 0.75; ctx.font = `700 ${f2}px ${FONT}`; ctx.fillText(o.line2, 0, top + f1 + 2 + f2 / 2); }
-  // Countdown: a bar along the bottom edge that drains, orange when nearly out.
+  // specular highlight across the top, then the outline
+  const hl = ctx.createLinearGradient(0, -h / 2, 0, 0);
+  hl.addColorStop(0, "rgba(255,255,255,0.5)"); hl.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = hl; rr(ctx, -w / 2 + 2, -h / 2 + 2, w - 4, h * 0.5, Math.max(r - 2, 2)); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; rr(ctx, -w / 2 + 0.75, -h / 2 + 0.75, w - 1.5, h - 1.5, r); ctx.stroke();
+  ctx.strokeStyle = `rgba(${tint},0.9)`; ctx.lineWidth = 1; rr(ctx, -w / 2 - 2, -h / 2 - 2, w + 4, h + 4, r + 2); ctx.stroke();
+  // text and countdown scale with the tile
+  const bar = o.timeLeft != null, room = h - (bar ? 9 : 0);
+  const f1 = clamp(Math.round(room * 0.34), 13, 26), f2 = clamp(Math.round(room * 0.19), 9, 14);
+  const two = o.line2 && room >= 36;
+  const top = -h / 2 + (room - (two ? f1 + f2 + 3 : f1)) / 2;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,20,26,0.75)"; ctx.shadowBlur = 6; ctx.shadowOffsetY = 1;
+  ctx.fillStyle = "#fff"; ctx.font = `700 ${f1}px ${FONT}`; ctx.fillText(o.line1 ?? "", 0, top + f1 / 2);
+  if (two) { ctx.font = `600 ${f2}px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,0.86)"; ctx.fillText(o.line2, 0, top + f1 + 3 + f2 / 2); }
+  ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
   if (bar) {
-    ctx.globalAlpha = alpha;
-    const bw = (w - 16) * clamp(o.timeLeft, 0, 1);
-    ctx.fillStyle = "rgba(4,20,46,0.22)"; rr(ctx, -w / 2 + 8, h / 2 - 6, w - 16, 3, 1.5); ctx.fill();
-    ctx.fillStyle = o.timeLeft < 0.3 ? "#ff7a1a" : "#04142e"; rr(ctx, -w / 2 + 8, h / 2 - 6, bw, 3, 1.5); ctx.fill();
+    const bw = (w - 20) * clamp(o.timeLeft, 0, 1);
+    ctx.fillStyle = "rgba(0,0,0,0.35)"; rr(ctx, -w / 2 + 10, h / 2 - 9, w - 20, 3.5, 2); ctx.fill();
+    ctx.fillStyle = o.timeLeft < 0.3 ? "#f9a631" : "#fff"; rr(ctx, -w / 2 + 10, h / 2 - 9, bw, 3.5, 2); ctx.fill();
   }
   ctx.restore();
 }
 
-function drawBandAndLine(pts, nowX, headY, q) {
+/** The line takes the team's colour, as Gemini's own charts do; dark colours are lifted to read on black. */
+function teamRgb() {
+  const hex = /^#([0-9a-f]{6})$/i.exec(state.contract?.color ?? "");
+  if (!hex) return ACCENT;
+  let c = [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
+  const lum = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+  // Near-black or grey team colours would lift to a dull grey; use the accent for those.
+  if (lum < 0.14 || Math.max(...c) - Math.min(...c) < 40) return ACCENT;
+  if (lum < 0.5) { const k = (0.5 - lum) / (1 - lum); c = c.map((v) => Math.round(v + (255 - v) * k)); }
+  return c.join(",");
+}
+
+function drawBandAndLine(pts, nowX, headY, q, frame) {
   if (!pts.length) return;
   // Band: bid to ask over time. Hits are judged on its edges, not the middle line.
   ctx.beginPath();
@@ -256,7 +279,7 @@ function drawBandAndLine(pts, nowX, headY, q) {
     if (x1 < -40) continue;
     ctx.rect(x0, yOf(pts[i].ask), x1 - x0, yOf(pts[i].bid) - yOf(pts[i].ask));
   }
-  ctx.fillStyle = C.band + "0.10)"; ctx.fill();
+  ctx.fillStyle = C.band + "0.09)"; ctx.fill();
 
   // Mid line, with each 1-cent step eased into an S-curve so it flows.
   ctx.beginPath();
@@ -271,16 +294,23 @@ function drawBandAndLine(pts, nowX, headY, q) {
     else { ctx.lineTo(Math.max(nowX - 16, x), y); ctx.bezierCurveTo(nowX - 7, y, nowX - 7, headY, nowX, headY); }
     prevY = y;
   }
+  const team = teamRgb();
   ctx.lineJoin = "round"; ctx.lineCap = "round";
-  ctx.strokeStyle = C.lineGlow; ctx.lineWidth = 9; ctx.globalAlpha = 0.22; ctx.stroke();
-  ctx.globalAlpha = 1; ctx.strokeStyle = C.line; ctx.lineWidth = 2.6;
-  ctx.shadowColor = C.lineGlow; ctx.shadowBlur = 16; ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = `rgba(${team},0.9)`; ctx.lineWidth = 11; ctx.globalAlpha = 0.22; ctx.stroke();
+  ctx.globalAlpha = 1; ctx.strokeStyle = `rgb(${team})`; ctx.lineWidth = 3.2;
+  ctx.shadowColor = `rgba(${team},0.95)`; ctx.shadowBlur = 18; ctx.stroke(); ctx.shadowBlur = 0;
+  if (!reduceMotion) {
+    // Light running along the line toward the head: motion without touching the price.
+    ctx.setLineDash([26, 190]); ctx.lineDashOffset = -frame / 9;
+    ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineWidth = 3.2;
+    ctx.shadowColor = "#fff"; ctx.shadowBlur = 14; ctx.stroke(); ctx.shadowBlur = 0; ctx.setLineDash([]);
+  }
 
   // Project today's bid and ask across the future so each square shows how far it is.
-  ctx.setLineDash([2, 6]); ctx.lineWidth = 1.2;
-  for (const [p, label] of [[q.ask, "ask " + cents(q.ask)], [q.bid, "bid " + cents(q.bid)]]) {
+  ctx.setLineDash([3, 7]); ctx.lineWidth = 1.4; ctx.lineDashOffset = reduceMotion ? 0 : -frame / 40;
+  for (const p of [q.ask, q.bid]) {
     const y = yOf(p);
-    ctx.strokeStyle = C.band + "0.55)";
+    ctx.strokeStyle = C.band + "0.7)";
     ctx.beginPath(); ctx.moveTo(nowX, y); ctx.lineTo(W - 44, y); ctx.stroke();
   }
   ctx.setLineDash([]);
@@ -300,8 +330,9 @@ function draw(frame) {
   state.shake *= 0.86;
 
   // Zoom to the spread: as close as possible while keeping ~4 tappable rows each side on screen.
-  const maxH = W < 560 ? 68 : 84;
-  const fitH = clamp(H / (Math.round((q.ask - q.bid) * 100) + 9), 30, maxH);
+  // Zoomed in: about three tappable rows each side of the spread, as large as the screen allows.
+  const maxH = W < 560 ? 86 : 104;
+  const fitH = clamp(H / (Math.round((q.ask - q.bid) * 100) + 6.4), 34, maxH);
   CELL_H = state.center === null || reduceMotion ? fitH : CELL_H + (fitH - CELL_H) * 0.06;
 
   const mid = (q.bid + q.ask) / 2;
@@ -315,6 +346,21 @@ function draw(frame) {
   const row0 = Math.max(1, Math.floor(pOf(H) * 100)), row1 = Math.min(98, Math.floor(pOf(0) * 100));
   const minLead = state.limits?.minLeadMs ?? 3000;
   const headY = yOf(state.shownMid);
+
+  // ambient motion (decoration only): motes drifting with the grid, a light sweep over what's ahead
+  if (!reduceMotion) {
+    if (state.stars.length !== 46) state.stars = Array.from({ length: 46 }, () => ({ x: rand(0, 1), y: rand(0, 1), s: rand(0.6, 2), v: rand(0.3, 1), a: rand(0.15, 0.5) }));
+    for (const st of state.stars) {
+      st.x -= (st.v * 0.00042 * 1280) / Math.max(W, 320);
+      if (st.x < -0.02) { st.x = 1.02; st.y = rand(0, 1); }
+      ctx.fillStyle = `rgba(190,245,255,${st.a * (0.6 + 0.4 * Math.sin(frame / 500 + st.y * 40))})`;
+      ctx.beginPath(); ctx.arc(st.x * W, st.y * H, st.s, 0, Math.PI * 2); ctx.fill();
+    }
+    const sw = (frame / 3600) % 1, sx = nowX + sw * (W - nowX);
+    const sg = ctx.createLinearGradient(sx - 150, 0, sx + 30, 0);
+    sg.addColorStop(0, `rgba(${ACCENT},0)`); sg.addColorStop(0.85, `rgba(${ACCENT},${0.1 * Math.sin(Math.PI * sw)})`); sg.addColorStop(1, `rgba(${ACCENT},0)`);
+    ctx.fillStyle = sg; ctx.fillRect(sx - 150, 0, 180, H);
+  }
 
   // spread zone ahead of the line: squares here can't be tapped
   const zg = ctx.createLinearGradient(nowX, 0, W, 0);
@@ -350,7 +396,7 @@ function draw(frame) {
   const hv = state.hover;
   if (hv) {
     const hx = xOf(hv.col * colMs()), hy = yOf(hv.hi);
-    ctx.fillStyle = "rgba(127,220,255,0.06)";
+    ctx.fillStyle = `rgba(${ACCENT},0.05)`;
     ctx.fillRect(hx, 0, CELL_W, H); ctx.fillRect(0, hy, W, CELL_H);
   }
 
@@ -370,19 +416,29 @@ function draw(frame) {
       if (!plan) continue;
       const cx = x + CELL_W / 2, cy = yOf((r + 1) / 100) + CELL_H / 2;
       if (cy < 12 || cy > H - 30) continue;
-      const hot = hv && hv.col === c && hv.row === r;
+      const pressed = state.press && state.press.col === c && state.press.row === r;
+      const hot = pressed || (hv && hv.col === c && hv.row === r);
       if (hot) {
+        // Hover lifts a glass square off the grid; pressing pushes it in with a heavy outline.
+        const inset = pressed ? 8 : 4, rad = Math.min(16, CELL_H * 0.24);
         ctx.save();
-        ctx.shadowColor = C.tileGlow; ctx.shadowBlur = 24;
-        ctx.strokeStyle = "rgba(200,240,255,0.95)"; ctx.lineWidth = 1.5;
-        ctx.fillStyle = "rgba(127,220,255,0.18)";
-        rr(ctx, cx - CELL_W / 2 + 4, cy - CELL_H / 2 + 4, CELL_W - 8, CELL_H - 8, 12); ctx.fill(); ctx.stroke();
+        ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = pressed ? 8 : 20; ctx.shadowOffsetY = pressed ? 3 : 11;
+        ctx.fillStyle = `rgba(${ACCENT},${pressed ? 0.34 : 0.16})`;
+        rr(ctx, cx - CELL_W / 2 + inset, cy - CELL_H / 2 + inset, CELL_W - inset * 2, CELL_H - inset * 2, rad); ctx.fill();
+        ctx.shadowOffsetY = 0; ctx.shadowColor = `rgba(${ACCENT},0.95)`; ctx.shadowBlur = pressed ? 30 : 20;
+        ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineWidth = pressed ? 3 : 1.5; ctx.stroke();
+        ctx.shadowBlur = 0;
+        const hl = ctx.createLinearGradient(0, cy - CELL_H / 2, 0, cy);
+        hl.addColorStop(0, "rgba(255,255,255,0.28)"); hl.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = hl; rr(ctx, cx - CELL_W / 2 + inset + 2, cy - CELL_H / 2 + inset + 2, CELL_W - inset * 2 - 4, CELL_H * 0.42, rad - 2); ctx.fill();
+        if (pressed) { ctx.strokeStyle = `rgba(${ACCENT},0.8)`; ctx.lineWidth = 1.5; rr(ctx, cx - CELL_W / 2 + 1.5, cy - CELL_H / 2 + 1.5, CELL_W - 3, CELL_H - 3, rad + 4); ctx.stroke(); }
         ctx.restore();
-        ctx.fillStyle = "#ffffff"; ctx.font = `700 16px ${FONT}`;
-        ctx.fillText(plan.multiple.toFixed(2) + "x", cx, cy - 9);
+        const fs = clamp(Math.round(CELL_H * 0.26), 14, 24);
+        ctx.fillStyle = "#ffffff"; ctx.font = `700 ${fs}px ${FONT}`;
+        ctx.fillText(plan.multiple.toFixed(2) + "x", cx, cy - fs * 0.42);
         const qty = Math.floor((state.stake / plan.entry) * 100) / 100;
-        ctx.fillStyle = C.win; ctx.font = `700 12px ${FONT}`;
-        ctx.fillText("+" + fmtMoney(qty * (plan.target - plan.entry)), cx, cy + 11);
+        ctx.fillStyle = C.win; ctx.font = `700 ${Math.max(11, Math.round(fs * 0.62))}px ${FONT}`;
+        ctx.fillText("+" + fmtMoney(qty * (plan.target - plan.entry)), cx, cy + fs * 0.55);
       } else {
         // Bigger payouts read brighter; squares near the price shimmer.
         const heat = clamp((plan.multiple - 1) / 0.4, 0, 1);
@@ -390,10 +446,19 @@ function draw(frame) {
         const shimmer = reduceMotion ? 0 : near * 0.25 * (0.5 + 0.5 * Math.sin(frame / 260 + c * 0.9));
         const [cr, cg, cb] = C.mult;
         ctx.fillStyle = `rgba(${cr + (255 - cr) * heat * 0.6},${cg + (255 - cg) * heat * 0.6},${cb},${clamp((0.4 + 0.5 * heat + shimmer) * fadeIn, 0, 1)})`;
-        ctx.font = `${heat > 0.5 ? 700 : 600} 13px ${FONT}`;
+        ctx.font = `${heat > 0.5 ? 700 : 600} ${clamp(Math.round(CELL_H * 0.2), 12, 19)}px ${FONT}`;
         ctx.fillText(plan.multiple.toFixed(2) + "X", cx, cy);
       }
     }
+  }
+
+  if (state.thin) {
+    const msg = "Thin market: waiting for a two-sided price";
+    ctx.font = `600 14px ${FONT}`; ctx.textAlign = "center";
+    const mw = ctx.measureText(msg).width + 36, mx = nowX + (W - nowX) / 2, my = Math.max(40, H * 0.2);
+    ctx.fillStyle = "rgba(6,18,22,0.85)"; ctx.strokeStyle = "rgba(249,166,49,0.6)"; ctx.lineWidth = 1;
+    rr(ctx, mx - mw / 2, my - 18, mw, 36, 18); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#f9a631"; ctx.fillText(msg, mx, my + 1);
   }
 
   // price scale and time labels
@@ -410,7 +475,7 @@ function draw(frame) {
   }
 
   // band, line, projected bid/ask
-  drawBandAndLine(state.ticks, nowX, headY, q);
+  drawBandAndLine(state.ticks, nowX, headY, q, frame);
 
   // comet trail off the head
   if (!reduceMotion && frame % 2 < 1 + (state.headKick > 0.2 ? 1 : 0)) {
@@ -420,17 +485,23 @@ function draw(frame) {
   state.trail = state.trail.filter((d) => frame - d.born < d.life);
   for (const d of state.trail) {
     const k = (frame - d.born) / d.life;
-    ctx.fillStyle = `rgba(170,225,255,${(1 - k) * 0.55})`;
+    ctx.fillStyle = `rgba(255,255,255,${(1 - k) * 0.5})`;
     ctx.beginPath(); ctx.arc(xOf(d.t), yOf(d.p) + k * rand(-3, 3), d.s * (1 - k * 0.6), 0, Math.PI * 2); ctx.fill();
   }
 
   // head: pulse ring, kick on each price change
   const pulse = reduceMotion ? 0.5 : (Math.sin(frame / 300) + 1) / 2;
   const kick = state.headKick;
-  ctx.strokeStyle = `rgba(160,225,255,${0.55 - pulse * 0.4})`; ctx.lineWidth = 2;
+  ctx.strokeStyle = `rgba(255,255,255,${0.55 - pulse * 0.4})`; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(nowX, headY, 8 + pulse * 10 + kick * 14, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = "#fff"; ctx.shadowColor = C.lineGlow; ctx.shadowBlur = 20 + kick * 30;
-  ctx.beginPath(); ctx.arc(nowX, headY, 5 + kick * 4, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+  const team = teamRgb();
+  if (!reduceMotion) {
+    const ping = (frame % 2200) / 2200;
+    ctx.strokeStyle = `rgba(${team},${(1 - ping) * 0.45})`; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(nowX, headY, 10 + ping * 70, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.fillStyle = "#fff"; ctx.shadowColor = `rgba(${team},1)`; ctx.shadowBlur = 22 + kick * 30;
+  ctx.beginPath(); ctx.arc(nowX, headY, 6 + kick * 4, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
 
   // win markers pinned to the line where each hit happened
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -441,18 +512,37 @@ function draw(frame) {
     ctx.fillStyle = C.win; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2); ctx.fill();
     ctx.font = `700 11px ${FONT}`;
     const tw = ctx.measureText(m.text).width + 14;
-    ctx.fillStyle = "rgba(125,255,197,0.16)"; ctx.strokeStyle = "rgba(125,255,197,0.7)"; ctx.lineWidth = 1;
+    ctx.fillStyle = "rgba(74,222,128,0.18)"; ctx.strokeStyle = "rgba(74,222,128,0.75)"; ctx.lineWidth = 1;
     rr(ctx, x - tw / 2, y - 30, tw, 19, 10); ctx.fill(); ctx.stroke();
     ctx.fillStyle = C.win; ctx.fillText(m.text, x, y - 20.5);
   }
   state.marks = state.marks.filter((m) => xOf(m.t) > -80);
 
-  // quote readout beside the head
-  ctx.textAlign = "left"; ctx.font = `700 13px ${FONT}`;
-  const readout = cents(q.bid) + " / " + cents(q.ask), rw = ctx.measureText(readout).width + 16;
-  ctx.fillStyle = "rgba(8,20,48,0.85)"; ctx.strokeStyle = "rgba(140,200,255,0.45)"; ctx.lineWidth = 1;
-  rr(ctx, nowX + 18, headY - 11, rw, 22, 11); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = "#fff"; ctx.fillText(readout, nowX + 26, headY + 0.5);
+  // readout beside the head: who and what chance (as Gemini's charts label it), bid/ask, buyers vs sellers
+  {
+    const name = (state.contract?.label ?? "").slice(0, 16), pct = Math.round(mid * 100) + "%";
+    const quoteTxt = cents(q.bid) + " / " + cents(q.ask);
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.font = `700 15px ${FONT}`; const w1 = ctx.measureText(name + "  " + pct).width;
+    ctx.font = `600 12px ${FONT}`; const w2 = ctx.measureText(quoteTxt).width;
+    const bw = Math.max(w1, w2, 96) + 24, bh = state.sizes ? 58 : 46, bx = nowX + 20, by = headY - bh / 2;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 16; ctx.shadowOffsetY = 8;
+    ctx.fillStyle = "rgba(6,18,22,0.82)"; rr(ctx, bx, by, bw, bh, 13); ctx.fill();
+    ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = "rgba(255,255,255,0.2)"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.restore();
+    ctx.font = `700 15px ${FONT}`; ctx.fillStyle = `rgb(${teamRgb()})`; ctx.fillText(name, bx + 12, by + 15);
+    ctx.fillStyle = "#fff"; ctx.fillText(pct, bx + 12 + ctx.measureText(name + "  ").width, by + 15);
+    ctx.font = `600 12px ${FONT}`; ctx.fillStyle = C.label; ctx.fillText(quoteTxt, bx + 12, by + 33);
+    if (state.sizes) {
+      // Resting orders at the best bid and ask: real order-book data, eased so it glides.
+      const sz = state.sizes; sz.shown += (sz.share - sz.shown) * 0.08;
+      const full = bw - 24, gw = full * clamp(sz.shown, 0.04, 0.96);
+      ctx.fillStyle = `rgba(${GREEN},0.9)`; rr(ctx, bx + 12, by + 45, gw - 1, 4, 2); ctx.fill();
+      ctx.fillStyle = `rgba(${RED},0.9)`; rr(ctx, bx + 12 + gw + 1, by + 45, full - gw - 1, 4, 2); ctx.fill();
+    }
+  }
 
   // open positions: charge toward the hit, countdown, heartbeat when one cent away
   let tension = null;
@@ -472,7 +562,7 @@ function draw(frame) {
     const s = reduceMotion ? 1 : age < 1 ? 0.6 + 0.4 * easeOutBack(clamp(age, 0, 1)) : 1;
     const jx = near && !reduceMotion ? Math.sin(frame / 25) * 1.6 : 0, jy = near && !reduceMotion ? Math.cos(frame / 31) * 1.2 : 0;
     const flick = left < 0.3 && !reduceMotion ? 0.85 + 0.15 * Math.sin(frame / 60) : 1;
-    tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 8, CELL_H - 8, {
+    tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 10, CELL_H - 10, {
       scale: s, alpha: flick, charge, fromTop: p.side === "no", timeLeft: left, near,
       line1: "$" + Math.round(p.cost), line2: near ? "1¢ AWAY" : (p.multiple ? p.multiple.toFixed(2) + "X" : ""),
     });
@@ -480,7 +570,7 @@ function draw(frame) {
   for (const [key, g] of state.ghosts) {
     const [c, r] = key.split(":").map(Number);
     const age = clamp((frame - g.bornAt) / 220, 0, 1);
-    tile(xOf(c * colMs()) + CELL_W / 2, yOf((r + 1) / 100) + CELL_H / 2, CELL_W - 8, CELL_H - 8, {
+    tile(xOf(c * colMs()) + CELL_W / 2, yOf((r + 1) / 100) + CELL_H / 2, CELL_W - 10, CELL_H - 10, {
       scale: reduceMotion ? 1 : 1.35 - 0.35 * easeOutBack(age), alpha: 0.85, line1: "$" + g.stake, line2: g.multiple.toFixed(2) + "X",
     });
   }
@@ -500,7 +590,7 @@ function draw(frame) {
     const k = (frame - f.t0) / f.life;
     const x = xOf(f.time) + (f.dx ?? 0), y = yOf(f.price) + (f.dy ?? 0);
     if (f.kind === "burst") {
-      tile(x, y, f.w, f.h, { scale: 1 + easeOut(k) * 0.6, alpha: 1 - k, top: "#ffffff", bottom: f.win ? "#b6ffe0" : "#ffb3bd", glow: f.win ? "rgba(125,255,197,1)" : "rgba(255,125,143,0.9)" });
+      tile(x, y, f.w, f.h, { scale: 1 + easeOut(k) * 0.6, alpha: 1 - k, tint: f.win ? GREEN : RED, bright: true });
     } else if (f.kind === "ring") {
       ctx.strokeStyle = `rgba(${f.rgb},${(1 - k) * (f.a ?? 1)})`; ctx.lineWidth = (f.width ?? 3) * (1 - k) + 0.5;
       ctx.beginPath(); ctx.arc(x, y, (f.r0 ?? 20) + easeOut(k) * f.size, 0, Math.PI * 2); ctx.stroke();
@@ -542,9 +632,9 @@ function drawOverlay(frame) {
       const x = (1 - e) * (1 - e) * o.x0 + 2 * (1 - e) * e * o.cx + e * e * o.x1;
       const y = (1 - e) * (1 - e) * o.y0 + 2 * (1 - e) * e * o.cy + e * e * o.y1;
       fctx.save(); fctx.translate(x, y); fctx.scale(1 - k * 0.4, 1 - k * 0.4);
-      fctx.shadowColor = "rgba(125,255,197,1)"; fctx.shadowBlur = 16;
-      fctx.fillStyle = "#c9ffe8"; fctx.beginPath(); fctx.arc(0, 0, 6, 0, Math.PI * 2); fctx.fill();
-      fctx.fillStyle = "#7dffc5"; fctx.beginPath(); fctx.arc(0, 0, 3.5, 0, Math.PI * 2); fctx.fill();
+      fctx.shadowColor = "rgba(74,222,128,1)"; fctx.shadowBlur = 16;
+      fctx.fillStyle = "#d6ffe4"; fctx.beginPath(); fctx.arc(0, 0, 6, 0, Math.PI * 2); fctx.fill();
+      fctx.fillStyle = "#4ade80"; fctx.beginPath(); fctx.arc(0, 0, 3.5, 0, Math.PI * 2); fctx.fill();
       fctx.restore();
       if (k >= 1 && !o.done) { o.done = true; sfx.coin(o.i); bumpWallet(); }
     } else if (o.kind === "confetti") {
@@ -574,32 +664,47 @@ function ripple(x, y, size = 260, life = 900) {
 
 function tapFx(box) {
   const t0 = performance.now(), time = box.deadline - colMs() / 2, price = (box.lo + box.hi) / 2;
-  state.fx.push({ kind: "ring", t0, life: 450, time, price, rgb: "170,230,255", size: 46, r0: 18, width: 3 });
-  if (!reduceMotion) for (let i = 0; i < 8; i++) state.fx.push({ kind: "spark", t0, life: rand(300, 500), time, price, a: rand(0, Math.PI * 2), dist: rand(26, 50), rgb: "190,240,255", g: 0, s: 2 });
+  state.fx.push({ kind: "ring", t0, life: 450, time, price, rgb: ACCENT, size: 60, r0: 18, width: 3 });
+  if (!reduceMotion) for (let i = 0; i < 8; i++) state.fx.push({ kind: "spark", t0, life: rand(300, 500), time, price, a: rand(0, Math.PI * 2), dist: rand(26, 50), rgb: "200,250,255", g: 0, s: 2.4 });
   ripple(xOf(time), yOf(price), 220, 700);
 }
 
 function priceFx(up) {
   const t0 = performance.now(), time = now(), price = state.shownMid;
   state.headKick = 1;
-  const rgb = up ? "125,255,197" : "255,125,143";
+  const rgb = up ? GREEN : RED;
   state.fx.push({ kind: "ring", t0, life: 600, time, price, rgb, size: 44, r0: 8, width: 2.5 });
   if (!reduceMotion) for (let i = 0; i < 10; i++) state.fx.push({ kind: "spark", t0, life: rand(400, 700), time, price, a: up ? rand(-Math.PI * 0.9, -Math.PI * 0.1) : rand(Math.PI * 0.1, Math.PI * 0.9), dist: rand(20, 46), rgb, g: up ? -10 : 20, s: 2.2 });
   ripple(W * NOW_AT, yOf(price), 340, 1100);
+}
+
+/** Orders arriving or leaving at the best bid/ask: real book activity, shown as sparks on that edge. */
+function orderFlow(d) {
+  const b = d.bidSize || 0, a = d.askSize || 0;
+  if (b + a <= 0) return;
+  const prev = state.sizes;
+  state.sizes = { bid: b, ask: a, share: b / (b + a), shown: prev?.shown ?? b / (b + a) };
+  if (!prev || reduceMotion || !state.quote) return;
+  const t0 = performance.now(), time = now();
+  for (const [changed, price, rgb, dir] of [[b !== prev.bid, d.bid, GREEN, 1], [a !== prev.ask, d.ask, RED, -1]]) {
+    if (!changed) continue;
+    state.fx.push({ kind: "ring", t0, life: 500, time, price, rgb, size: 26, r0: 4, width: 2, a: 0.8 });
+    for (let i = 0; i < 7; i++) state.fx.push({ kind: "spark", t0, life: rand(450, 800), time, price, a: rand(-0.5, 0.5) + (dir > 0 ? -Math.PI / 2 : Math.PI / 2), dist: rand(14, 40), rgb, g: 0, s: 2 });
+  }
 }
 
 function winFx(p, big) {
   const span = p.colMs ?? colMs();
   const time = p.deadline - span / 2, price = (p.lo + p.hi) / 2, t0 = performance.now();
   state.fx.push({ kind: "burst", t0, life: 650, time, price, w: CELL_W - 8, h: CELL_H - 8, win: true });
-  state.fx.push({ kind: "ring", t0, life: 700, time, price, rgb: "125,255,197", size: big ? 150 : 100, r0: 24, width: 4 });
+  state.fx.push({ kind: "ring", t0, life: 700, time, price, rgb: GREEN, size: big ? 150 : 100, r0: 24, width: 4 });
   state.fx.push({ kind: "ring", t0: t0 + 90, life: 800, time, price, rgb: "200,255,235", size: big ? 220 : 150, r0: 24, width: 2, a: 0.7 });
-  if (!reduceMotion) for (let i = 0; i < (big ? 34 : 22); i++) state.fx.push({ kind: "spark", t0, life: rand(500, 950), time, price, a: rand(0, Math.PI * 2), dist: rand(40, big ? 140 : 100), rgb: i % 3 ? "170,255,220" : "255,240,180", s: 3 });
+  if (!reduceMotion) for (let i = 0; i < (big ? 34 : 22); i++) state.fx.push({ kind: "spark", t0, life: rand(500, 950), time, price, a: rand(0, Math.PI * 2), dist: rand(40, big ? 140 : 100), rgb: i % 3 ? "150,255,190" : "255,240,180", s: 3 });
   state.fx.push({ kind: "text", t0, life: 1600, time, price, dy: -6, text: fmtSigned(p.pnl), size: big ? 34 : 28, color: C.win, rise: 70 });
   ripple(xOf(time), yOf(price), big ? 520 : 380, 1300);
   if (reduceMotion) return;
   state.shake = big ? 9 : 5;
-  state.flash = big ? 0.28 : 0.16; state.flashColor = "125,255,197";
+  state.flash = big ? 0.28 : 0.16; state.flashColor = GREEN;
   // Coins fly from the tile to the balance.
   const gr = canvas.getBoundingClientRect(), wr = $("wallet").getBoundingClientRect();
   const x0 = gr.left + xOf(time), y0 = gr.top + yOf(price), x1 = wr.left + wr.width * 0.6, y1 = wr.top + wr.height / 2;
@@ -608,7 +713,7 @@ function winFx(p, big) {
     state.over.push({ kind: "coin", i, t0: t0 + 120 + i * 45, life: 650 + rand(-80, 80), x0: x0 + rand(-14, 14), y0: y0 + rand(-10, 10), cx: (x0 + x1) / 2 + rand(-120, 120), cy: Math.min(y0, y1) - rand(60, 180), x1, y1 });
   }
   if (big) {
-    const colors = ["#7dffc5", "#7fdcff", "#ffd166", "#ffffff", "#b38cff"];
+    const colors = ["#4ade80", "#26ddf9", "#f9a631", "#ffffff", "#fc4848"];
     for (let i = 0; i < 90; i++) state.over.push({ kind: "confetti", t0, life: rand(1200, 2000), x: x0, y: y0, vx: rand(-1.2, 1.2), vy: rand(-1.5, -0.3), rot: rand(0, 6), spin: rand(-12, 12), color: colors[i % colors.length] });
   }
 }
@@ -619,7 +724,7 @@ function missFx(p) {
   state.fx.push({ kind: "burst", t0, life: 380, time, price, w: CELL_W - 8, h: CELL_H - 8, win: false });
   if (!reduceMotion) for (let i = 0; i < 12; i++) state.fx.push({ kind: "shard", t0, life: rand(600, 900), time, price, vx: rand(-1.4, 1.4), vy: rand(-1.6, -0.2), rot: rand(-6, 6), s: rand(5, 11), color: i % 2 ? "rgba(140,200,255,0.9)" : "rgba(255,140,160,0.85)" });
   state.fx.push({ kind: "text", t0, life: 1200, time, price, text: fmtSigned(p.pnl), size: 18, color: p.pnl >= 0 ? C.win : C.loss, rise: 36 });
-  if (!reduceMotion) { state.shake = 2.5; state.flash = 0.06; state.flashColor = "255,125,143"; }
+  if (!reduceMotion) { state.shake = 2.5; state.flash = 0.06; state.flashColor = RED; }
 }
 
 // ---------- input ----------
@@ -628,8 +733,15 @@ function pointer(e) {
   return boxAt(e.clientX - r.left, e.clientY - r.top);
 }
 canvas.addEventListener("pointermove", (e) => { state.hover = e.pointerType === "touch" ? null : pointer(e); });
-canvas.addEventListener("pointerleave", () => { state.hover = null; });
+canvas.addEventListener("pointerleave", () => { state.hover = null; state.press = null; });
+canvas.addEventListener("pointercancel", () => { state.press = null; });
+canvas.addEventListener("pointerdown", (e) => {
+  const box = pointer(e);
+  state.press = box ? { col: box.col, row: box.row } : null;
+  if (box) { tone(300, 240, 0.05, "sine", 0.05); buzz(4); }
+});
 canvas.addEventListener("pointerup", async (e) => {
+  state.press = null;
   hideCoach();
   const box = pointer(e);
   if (!box || !state.contract) { if (state.quote) { sfx.deny(); buzz(6); } return; }
@@ -737,7 +849,7 @@ function onMove(m) {
 // ---------- stream ----------
 function openStream() {
   state.source?.close();
-  state.ticks = []; state.quote = null; state.center = null; state.hover = null; state.lastMid = null; state.trail = [];
+  state.ticks = []; state.quote = null; state.center = null; state.hover = null; state.lastMid = null; state.trail = []; state.sizes = null; state.thin = false;
   const c = state.contract;
   if (!c) return;
   const src = new EventSource(`/api/stream?sid=${sid}&symbol=${encodeURIComponent(c.symbol)}&game=${encodeURIComponent(state.game?.id ?? "")}`);
@@ -757,7 +869,11 @@ function openStream() {
   src.addEventListener("quote", (e) => {
     if (!mine()) return;
     const d = JSON.parse(e.data);
-    if (!drawable(d)) return; // one-sided or gapped: the server still uses it for fills
+    // One-sided or gapped quotes aren't drawn, but they are the real market right now:
+    // no square can be traded until a normal two-sided price is back.
+    state.thin = !drawable(d);
+    if (state.thin) return;
+    orderFlow(d);
     state.quote = { bid: d.bid, ask: d.ask };
     const lastTick = state.ticks.at(-1);
     if (!lastTick || lastTick.bid !== d.bid || lastTick.ask !== d.ask) state.ticks.push(d);
@@ -826,7 +942,7 @@ function renderMarkets() {
 function selectContract(c) { state.contract = c; renderMarkets(); openStream(); }
 function selectMarket(m) {
   // Open on the contract nearest 50/50 with a tight spread: that's where the action is.
-  const quoted = m.contracts.filter((c) => c.bid != null && c.ask != null);
+  const quoted = m.contracts.filter((c) => drawable(c));
   const score = (c) => Math.abs((c.bid + c.ask) / 2 - 0.5) + (c.ask - c.bid) * 2;
   quoted.sort((a, b) => score(a) - score(b));
   state.market = m;

@@ -107,8 +107,11 @@ export function groupGames(events: RawEvent[]): Game[] {
       ...g,
       markets: g.markets.sort((a, b) => order.get(a.ticker)! - order.get(b.ticker)! || b.volume24h - a.volume24h),
     }))
-    .sort((a, b) => b.volume24h - a.volume24h);
+    // Games whose winner market has a real two-sided price come first; finished games sink.
+    .sort((a, b) => Number(tradable(b)) - Number(tradable(a)) || b.volume24h - a.volume24h);
 }
+
+const tradable = (g: Game) => g.markets[0]?.contracts.some((c) => isDrawable(c)) ?? false;
 
 export async function fetchLiveGames(pages = 3, pageSize = 50): Promise<Game[]> {
   const events: RawEvent[] = [];

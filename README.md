@@ -64,6 +64,12 @@ Paper fills ignore order-book depth and fees, so real results will be somewhat w
 
 Enforced on the server for every tap (`DEFAULT_LIMITS` in `engine.ts`): $1 to $100 per tap, at most $500 in open positions, and the price is always taken from the server's own quote, never from the browser.
 
+## Look
+
+The palette and type follow Gemini's own site (near-black, cyan accent, their green and red, the Geist typeface), and the line takes each team's colour the way Gemini's charts do. TapLine uses its own name and mark, not Gemini's logo.
+
+Ambient motion (drifting motes, the light running along the line, the sweep across upcoming columns) is decoration. Everything that carries information is real data: the line and band are Gemini's bid and ask, the green/red bar by the line is the size resting at the best bid and ask, sparks on the band's edges fire when those orders change, and the pills are real price moves elsewhere in the game. When the market gaps or goes one-sided the grid says so and offers no squares.
+
 ## Layout
 
 - `src/server/gemini.ts`: game discovery (REST) and the live quote feed (WebSocket)

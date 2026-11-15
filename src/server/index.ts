@@ -142,7 +142,7 @@ app.get("/api/stream", (c) => {
     const send = (event: string, data: unknown) => void stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {});
     send("history", { symbol, ticks: feed.ticks(symbol, Date.now() - 30 * 60_000), now: Date.now() });
     const onQuote = (q: Quote) => {
-      if (q.symbol === symbol) send("quote", { t: q.t, bid: q.bid, ask: q.ask });
+      if (q.symbol === symbol) send("quote", { t: q.t, bid: q.bid, ask: q.ask, bidSize: q.bidSize, askSize: q.askSize });
     };
     const onMove = (m: Move) => {
       const info = activity.get(m.symbol);
