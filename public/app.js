@@ -108,12 +108,39 @@ const sfx = {
 };
 const buzz = (p) => { try { navigator.vibrate?.(p); } catch {} };
 
-// ---------- API ----------
+// ---------- backend ----------
+// Two ways to run: against the TapLine server (src/server), or with no server at all, where the
+// browser talks to Gemini directly and runs the paper engine itself (local.js). The second is what
+// a static host serves. Both expose the same five calls.
 async function api(path, body) {
   const res = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sid, ...body }) } : undefined);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "request failed");
   return data;
+}
+
+const serverBackend = {
+  mode: "server",
+  games: () => api("/api/games"),
+  account: () => api(`/api/account?sid=${sid}`),
+  tap: (req) => api("/api/tap", req),
+  close: (id) => api("/api/close", { id }),
+  stream(symbol, gameId, on) {
+    const es = new EventSource(`/api/stream?sid=${sid}&symbol=${encodeURIComponent(symbol)}&game=${encodeURIComponent(gameId ?? "")}`);
+    for (const name of ["history", "quote", "move", "position", "ping"]) {
+      es.addEventListener(name, (e) => on[name]?.(JSON.parse(e.data)));
+    }
+    return { close: () => es.close() };
+  },
+};
+
+let backend = serverBackend;
+async function pickBackend() {
+  try {
+    const res = await fetch("/api/account?sid=" + sid);
+    if (res.ok && (res.headers.get("content-type") ?? "").includes("json")) return;
+  } catch {}
+  backend = (await import("./local.js")).createLocalBackend();
 }
 
 function toast(text, kind = "") {
@@ -757,7 +784,7 @@ canvas.addEventListener("pointerup", async (e) => {
   state.ghosts.set(key, { bornAt: performance.now(), stake: state.stake, multiple: box.plan.multiple });
   sfx.tap(box.plan.multiple); buzz(12); tapFx(box);
   try {
-    const { position } = await api("/api/tap", { symbol, lo: box.lo, hi: box.hi, deadline: box.deadline, stake: state.stake });
+    const { position } = await backend.tap({ symbol, lo: box.lo, hi: box.hi, deadline: box.deadline, stake: state.stake });
     upsertPosition({ ...position, colMs: span, bornAt: state.ghosts.get(key)?.bornAt, multiple: position.target / position.entry });
   } catch (err) {
     sfx.deny(); buzz(30);
@@ -793,7 +820,7 @@ function renderPositions() {
     row.append(main);
     if (p.status === "open") {
       const b = document.createElement("button"); b.className = "close-btn"; b.textContent = "Close";
-      b.onclick = async () => { try { await api("/api/close", { id: p.id }); } catch (err) { toast(err.message, "err"); } };
+      b.onclick = async () => { try { await backend.close(p.id); } catch (err) { toast(err.message, "err"); } };
       row.append(b);
     } else {
       const n = document.createElement("div"); n.className = "num " + (p.pnl >= 0 ? "pos" : "neg"); n.textContent = fmtSigned(p.pnl);
@@ -880,43 +907,42 @@ function openStream() {
   state.ticks = []; state.quote = null; state.center = null; state.hover = null; state.lastMid = null; state.trail = []; state.sizes = null; state.thin = false;
   const c = state.contract;
   if (!c) return;
-  const src = new EventSource(`/api/stream?sid=${sid}&symbol=${encodeURIComponent(c.symbol)}&game=${encodeURIComponent(state.game?.id ?? "")}`);
-  state.source = src;
+  let src;
   const mine = () => state.source === src;
-  src.addEventListener("history", (e) => {
-    if (!mine()) return;
-    const d = JSON.parse(e.data);
-    state.clockSkew = d.now - Date.now();
-    state.ticks = d.ticks;
-    const last = d.ticks.at(-1);
-    if (last) { state.quote = { bid: last.bid, ask: last.ask }; state.lastMid = (last.bid + last.ask) / 2; }
-    $("empty").hidden = !!last;
-    if (!last) $("empty").textContent = "Waiting for a live price on this contract…";
-    else maybeCoach();
+  src = state.source = backend.stream(c.symbol, state.game?.id, {
+    history(d) {
+      if (!mine()) return;
+      state.clockSkew = d.now - Date.now();
+      state.ticks = d.ticks;
+      const last = d.ticks.at(-1);
+      if (last) { state.quote = { bid: last.bid, ask: last.ask }; state.lastMid = (last.bid + last.ask) / 2; }
+      $("empty").hidden = !!last;
+      if (!last) $("empty").textContent = "Waiting for a live price on this contract…";
+      else maybeCoach();
+    },
+    quote(d) {
+      if (!mine()) return;
+      // One-sided or gapped quotes aren't drawn, but they are the real market right now:
+      // no square can be traded until a normal two-sided price is back.
+      state.thin = !drawable(d);
+      if (state.thin) return;
+      orderFlow(d);
+      state.quote = { bid: d.bid, ask: d.ask };
+      const lastTick = state.ticks.at(-1);
+      if (!lastTick || lastTick.bid !== d.bid || lastTick.ask !== d.ask) state.ticks.push({ t: d.t, bid: d.bid, ask: d.ask });
+      const mid = (d.bid + d.ask) / 2;
+      if (state.lastMid !== null && Math.abs(mid - state.lastMid) >= 0.005 - 1e-9) {
+        const up = mid > state.lastMid;
+        priceFx(up); up ? sfx.priceUp() : sfx.priceDown(); buzz(5);
+      }
+      state.lastMid = mid;
+      if (!$("empty").hidden) { $("empty").hidden = true; maybeCoach(); }
+      updateChipPrice(c.symbol, d);
+    },
+    move: (m) => mine() && onMove(m),
+    position: (e) => mine() && onPositionEvent(e),
+    ping: (d) => { if (mine()) state.clockSkew = d.now - Date.now(); },
   });
-  src.addEventListener("quote", (e) => {
-    if (!mine()) return;
-    const d = JSON.parse(e.data);
-    // One-sided or gapped quotes aren't drawn, but they are the real market right now:
-    // no square can be traded until a normal two-sided price is back.
-    state.thin = !drawable(d);
-    if (state.thin) return;
-    orderFlow(d);
-    state.quote = { bid: d.bid, ask: d.ask };
-    const lastTick = state.ticks.at(-1);
-    if (!lastTick || lastTick.bid !== d.bid || lastTick.ask !== d.ask) state.ticks.push(d);
-    const mid = (d.bid + d.ask) / 2;
-    if (state.lastMid !== null && Math.abs(mid - state.lastMid) >= 0.005 - 1e-9) {
-      const up = mid > state.lastMid;
-      priceFx(up); up ? sfx.priceUp() : sfx.priceDown(); buzz(5);
-    }
-    state.lastMid = mid;
-    $("empty").hidden = true;
-    updateChipPrice(c.symbol, d);
-  });
-  src.addEventListener("move", (e) => mine() && onMove(JSON.parse(e.data)));
-  src.addEventListener("position", (e) => mine() && onPositionEvent(JSON.parse(e.data)));
-  src.addEventListener("ping", (e) => { if (mine()) state.clockSkew = JSON.parse(e.data).now - Date.now(); });
 }
 
 // ---------- first-run hint ----------
@@ -995,7 +1021,7 @@ function renderGameList() {
 
 async function loadGames(first) {
   try {
-    const d = await api("/api/games");
+    const d = await backend.games();
     state.games = d.games;
     if (first && !d.games.length) {
       $("empty").textContent = d.error ? "Couldn't reach Gemini: " + d.error : "Loading live games from Gemini…";
@@ -1025,7 +1051,8 @@ async function init() {
   resize();
   requestAnimationFrame(draw);
 
-  const acct = await api(`/api/account?sid=${sid}`);
+  await pickBackend();
+  const acct = await backend.account();
   state.balance = state.balanceShown = acct.balance; state.limits = acct.limits;
   $("balance").textContent = fmtMoney(acct.balance);
   state.positions = acct.positions.map((p) => ({ ...p, multiple: p.target / p.entry }));

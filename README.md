@@ -40,6 +40,10 @@ npm start
 
 Open http://localhost:8787. No API key is needed: market data is public and orders are paper-filled.
 
+### Hosted version (no server)
+
+`public/` also runs on its own as a static site, which is how it's hosted on Vercel (`vercel.json`). With no TapLine server to talk to, the page connects to Gemini's public market data directly from the browser and runs the paper engine itself (`public/local.js`), keeping the paper account in that browser's storage. Real orders will need the server, because an API secret can't live in a browser.
+
 ```bash
 npm test
 ```
@@ -76,6 +80,7 @@ Ambient motion (drifting motes, the light running along the line, the sweep acro
 - `src/server/engine.ts`: the tap engine and paper broker
 - `src/server/index.ts`: HTTP API and the per-browser event stream
 - `public/`: the grid UI (plain JavaScript on a canvas, no build step)
+- `public/local.js`: the browser-only backend used when there is no server
 - `test/engine.test.ts`: engine tests
 
 ## Demo video
