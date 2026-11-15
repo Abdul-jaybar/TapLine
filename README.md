@@ -70,7 +70,7 @@ Enforced on the server for every tap (`DEFAULT_LIMITS` in `engine.ts`): $1 to $1
 
 ## Look
 
-The palette and type follow Gemini (near-black, the orange of their Developer Platform mark, their green and red, the Geist typeface), and the line takes each team's colour the way Gemini's charts do. TapLine uses its own name and mark, not Gemini's logo.
+The palette and type follow Gemini (near-black, the orange of their Developer Platform mark, their green and red). Type is Barlow, a sign-lettering grotesque, and the line takes each team's colour the way Gemini's charts do. TapLine uses its own name and mark, not Gemini's logo.
 
 Ambient motion (drifting motes, the light running along the line, the sweep across upcoming columns) is decoration. Everything that carries information is real data: the line and band are Gemini's bid and ask, the green/red bar by the line is the size resting at the best bid and ask, sparks on the band's edges fire when those orders change, and the pills are real price moves elsewhere in the game. When the market gaps or goes one-sided the grid says so and offers no squares.
 

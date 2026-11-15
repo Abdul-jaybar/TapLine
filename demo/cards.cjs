@@ -4,10 +4,10 @@ const { chromium } = require("playwright");
 const path = require("path");
 
 const base = `
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@1,700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">
   <style>
     * { box-sizing: border-box; margin: 0; }
-    body { width: 1280px; height: 720px; font-family: Geist, system-ui, sans-serif; color: #fff; overflow: hidden; }
+    body { width: 1280px; height: 720px; font-family: "Barlow Semi Condensed", system-ui, sans-serif; color: #fff; overflow: hidden; }
     .bg { background: radial-gradient(900px 560px at 30% 45%, rgba(38,221,249,.16), transparent 70%), linear-gradient(180deg, #06161b, #010304 62%); }
     .center { height: 720px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 110px; }
     h1 { font-size: 76px; font-weight: 700; letter-spacing: -.035em; line-height: 1.04; }

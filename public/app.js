@@ -24,7 +24,7 @@ const STAKES = [1, 5, 10, 25];
 const COLS = [5, 10, 30, 60];
 const COL_LABEL = { 5: "5s", 10: "10s", 30: "30s", 60: "1m" };
 const MAX_SPREAD = 0.1;
-const FONT = '"Geist", ui-sans-serif, system-ui, sans-serif';
+const FONT = '"Barlow Semi Condensed", ui-sans-serif, system-ui, sans-serif';
 // Gemini's palette: near-black, the orange of their developer platform mark, their green and red.
 const ACCENT = "249,94,1", GREEN = "74,222,128", RED = "252,72,72";
 const C = {
@@ -269,7 +269,7 @@ function tile(cx, cy, w, h, o) {
   ctx.strokeStyle = `rgba(${tint},0.9)`; ctx.lineWidth = 1; rr(ctx, -w / 2 - 2, -h / 2 - 2, w + 4, h + 4, r + 2); ctx.stroke();
   // text and countdown scale with the tile
   const bar = o.timeLeft != null, room = h - (bar ? 9 : 0);
-  const f1 = clamp(Math.round(room * (room < 36 ? 0.55 : 0.34)), 8, 26), f2 = clamp(Math.round(room * 0.19), 9, 14);
+  const f1 = clamp(Math.round(room * (room < 36 ? 0.55 : 0.34)), 8, 26), f2 = clamp(Math.round(room * 0.22), 10, 16);
   const two = o.line2 && room >= 36;
   const top = -h / 2 + (room - (two ? f1 + f2 + 3 : f1)) / 2;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -494,7 +494,7 @@ function draw(frame) {
         const shimmer = reduceMotion ? 0 : near * 0.25 * (0.5 + 0.5 * Math.sin(frame / 260 + c * 0.9));
         const [cr, cg, cb] = C.mult;
         ctx.fillStyle = `rgba(${cr + (255 - cr) * heat * 0.6},${cg + (255 - cg) * heat * 0.6},${cb},${clamp((0.4 + 0.5 * heat + shimmer) * fadeIn, 0, 1)})`;
-        ctx.font = `${heat > 0.5 ? 700 : 600} ${clamp(Math.round(CELL_H * 0.42), 9, 16)}px ${FONT}`;
+        ctx.font = `${heat > 0.5 ? 700 : 600} ${clamp(Math.round(CELL_H * 0.46), 10, 19)}px ${FONT}`;
         ctx.fillText(plan.multiple.toFixed(2) + "X", cx, cy);
       }
     }
@@ -510,7 +510,7 @@ function draw(frame) {
   }
 
   // price scale and time labels
-  ctx.font = `600 11px ${FONT}`; ctx.textAlign = "right";
+  ctx.font = `600 13px ${FONT}`; ctx.textAlign = "right";
   const rowStep = CELL_H >= 22 ? 1 : CELL_H >= 15 ? 2 : 5; // thin the price scale when zoomed out
   for (let r = row0; r <= row1 + 1; r++) { if (r % rowStep) continue; ctx.fillStyle = C.label; ctx.fillText(cents(r / 100), W - 6, yOf(r / 100) - Math.min(10, CELL_H / 2)); }
   ctx.textAlign = "center";
@@ -567,8 +567,8 @@ function draw(frame) {
     const name = (state.contract?.label ?? "").slice(0, 16), pct = Math.round(mid * 100) + "%";
     const quoteTxt = cents(q.bid) + " / " + cents(q.ask);
     ctx.textAlign = "left"; ctx.textBaseline = "middle";
-    ctx.font = `700 15px ${FONT}`; const w1 = ctx.measureText(name + "  " + pct).width;
-    ctx.font = `600 12px ${FONT}`; const w2 = ctx.measureText(quoteTxt).width;
+    ctx.font = `700 17px ${FONT}`; const w1 = ctx.measureText(name + "  " + pct).width;
+    ctx.font = `600 14px ${FONT}`; const w2 = ctx.measureText(quoteTxt).width;
     const bw = Math.max(w1, w2, 96) + 24, bh = state.sizes ? 58 : 46, bx = nowX + 20, by = headY - bh / 2;
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 16; ctx.shadowOffsetY = 8;
@@ -576,9 +576,9 @@ function draw(frame) {
     ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     ctx.strokeStyle = "rgba(255,255,255,0.2)"; ctx.lineWidth = 1; ctx.stroke();
     ctx.restore();
-    ctx.font = `700 15px ${FONT}`; ctx.fillStyle = `rgb(${teamRgb()})`; ctx.fillText(name, bx + 12, by + 15);
+    ctx.font = `700 17px ${FONT}`; ctx.fillStyle = `rgb(${teamRgb()})`; ctx.fillText(name, bx + 12, by + 15);
     ctx.fillStyle = "#fff"; ctx.fillText(pct, bx + 12 + ctx.measureText(name + "  ").width, by + 15);
-    ctx.font = `600 12px ${FONT}`; ctx.fillStyle = C.label; ctx.fillText(quoteTxt, bx + 12, by + 33);
+    ctx.font = `600 14px ${FONT}`; ctx.fillStyle = C.label; ctx.fillText(quoteTxt, bx + 12, by + 33);
     if (state.sizes) {
       // Resting orders at the best bid and ask: real order-book data, eased so it glides.
       const sz = state.sizes; sz.shown += (sz.share - sz.shown) * 0.08;
