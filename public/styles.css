@@ -265,3 +265,16 @@ body:not([data-view="lobby"]) .joinbar { display: none; }
   .joinbar { left: 10px; right: 10px; bottom: 10px; transform: none; width: auto; padding-left: 16px; }
   .cta { padding: 12px 26px; }
 }
+
+/* The page is an app surface: no pull-to-refresh, double-tap zoom, text selection or tap flash. */
+html, body { overscroll-behavior: none; }
+body { -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+button, .seg, .chip, .tab, .card { touch-action: manipulation; }
+input { -webkit-user-select: text; user-select: text; }
+/* Blurring whatever is behind a panel is costly when that is a canvas repainting every frame,
+   so panels that float over the grid use a plain translucent fill on phones. */
+@media (max-width: 560px) {
+  .toast, .move, .coach { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .toast, .move { background: rgb(22 16 13 / .94); }
+  .coach { background: rgb(22 16 13 / .96); }
+}

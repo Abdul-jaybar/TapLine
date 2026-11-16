@@ -30,6 +30,8 @@ const MAX_SPREAD = 0.1;
 const FONT = '"Barlow Semi Condensed", ui-sans-serif, system-ui, sans-serif';
 // Gemini's palette: near-black, the orange of their developer platform mark, their green and red.
 const ACCENT = "249,94,1", GREEN = "74,222,128", RED = "252,72,72";
+// Line colour when a team has no usable colour: near-white, so it never blends into the orange tiles.
+const LINE_FALLBACK = "255,244,234";
 const C = {
   grid: "rgba(255,255,255,0.075)", dot: [255, 214, 190],
   mult: [255, 176, 128], label: "rgba(154,163,166,0.95)",
@@ -46,7 +48,8 @@ const state = {
   win: clamp(Number(store.get("tapline.win")) || 5, 0.5, 500), colSec: 10,
   view: "lobby", pick: null, gamesError: null, gamesLoaded: false,
   clockSkew: 0, center: null,
-  thin: false, hover: null, press: null, zoom: clamp(Number(store.get("tapline.zoom")) || 1, 0.25, 1.5), pinch: null, ghosts: new Map(), stars: [], sizes: null,
+  thin: false, lite: false, slow: 0, lastFrame: 0, spreadHold: 0, spreadAt: 0, tickTimes: [], lastFlare: 0, lastBlip: 0,
+  hover: null, press: null, zoom: clamp(Number(store.get("tapline.zoom")) || 1, 0.25, 1.5), pinch: null, ghosts: new Map(), stars: [], sizes: null,
   fx: [], over: [], marks: [], trail: [], ripples: [],
   shake: 0, flash: 0, flashColor: GREEN, headKick: 0,
   streak: 0, lastTick: 0, lastBeat: 0,
@@ -200,8 +203,9 @@ const canvas = $("grid"), ctx = canvas.getContext("2d");
 const fxc = $("fx"), fctx = fxc.getContext("2d");
 let W = 0, H = 0, FW = 0, FH = 0;
 
+let DPR = 1;
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = (DPR = Math.min(window.devicePixelRatio || 1, 2));
   const r = canvas.getBoundingClientRect();
   W = r.width; H = r.height;
   const narrow = W < 560;
@@ -222,6 +226,30 @@ const yOf = (p) => H / 2 - ((p - state.center) / 0.01) * CELL_H;
 const pOf = (y) => state.center + ((H / 2 - y) / CELL_H) * 0.01;
 const easeOutBack = (t) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
 const easeOut = (t) => 1 - (1 - t) ** 3;
+
+const clockLabels = new Map();
+function clockLabel(ts) {
+  const key = ts + ":" + state.colSec;
+  let s = clockLabels.get(key);
+  if (!s) {
+    if (clockLabels.size > 300) clockLabels.clear();
+    s = new Date(ts - state.clockSkew).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: state.colSec < 60 ? "2-digit" : undefined });
+    clockLabels.set(key, s);
+  }
+  return s;
+}
+
+/** A specific square, or null if it isn't a future, tradable one right now. */
+function boxFor(col, row) {
+  if (state.center === null) return null;
+  const start = col * colMs();
+  const minLead = state.limits?.minLeadMs ?? 3000;
+  if (start < now() || start + colMs() < now() + minLead) return null;
+  if (row < 1 || row > 98) return null;
+  const lo = row / 100, hi = (row + 1) / 100;
+  const plan = planBox(lo, hi);
+  return plan ? { col, row, lo, hi, deadline: start + colMs(), plan } : null;
+}
 
 /** The square under a canvas point, or null if it isn't a future, tradable one. */
 function boxAt(x, y) {
@@ -253,14 +281,14 @@ function tile(cx, cy, w, h, o) {
   ctx.save();
   ctx.translate(cx, cy); ctx.scale(o.scale ?? 1, o.scale ?? 1); ctx.globalAlpha = alpha;
   // cast shadow, offset down as if lit from above
-  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 12;
+  if (!state.lite) { ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 22; ctx.shadowOffsetY = 12; }
   ctx.fillStyle = "rgba(1,8,10,0.55)"; rr(ctx, -w / 2, -h / 2, w, h, r); ctx.fill();
   ctx.shadowOffsetY = 0;
   // glow and tinted glass body
   const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
   g.addColorStop(0, `rgba(${o.bright ? "255,255,255" : tint},${o.bright ? 0.95 : 0.6})`);
   g.addColorStop(1, `rgba(${tint},${o.bright ? 0.75 : 0.24})`);
-  ctx.shadowColor = `rgba(${tint},0.8)`; ctx.shadowBlur = o.near ? 30 : 14;
+  if (!state.lite) { ctx.shadowColor = `rgba(${tint},0.8)`; ctx.shadowBlur = o.near ? 30 : 14; } else ctx.shadowBlur = 0;
   ctx.fillStyle = g; rr(ctx, -w / 2, -h / 2, w, h, r); ctx.fill();
   ctx.shadowBlur = 0;
   // charge: fills toward the side the price has to come from
@@ -284,7 +312,7 @@ function tile(cx, cy, w, h, o) {
   const two = o.line2 && room >= 36;
   const top = -h / 2 + (room - (two ? f1 + f2 + 3 : f1)) / 2;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.shadowColor = "rgba(0,20,26,0.75)"; ctx.shadowBlur = 6; ctx.shadowOffsetY = 1;
+  if (!state.lite) { ctx.shadowColor = "rgba(0,20,26,0.75)"; ctx.shadowBlur = 6; ctx.shadowOffsetY = 1; }
   ctx.fillStyle = "#fff"; ctx.font = `700 ${f1}px ${FONT}`; ctx.fillText(o.line1 ?? "", 0, top + f1 / 2);
   if (two) { ctx.font = `600 ${f2}px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,0.86)"; ctx.fillText(o.line2, 0, top + f1 + 3 + f2 / 2); }
   ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
@@ -299,11 +327,11 @@ function tile(cx, cy, w, h, o) {
 /** The line takes the team's colour, as Gemini's own charts do; dark colours are lifted to read on black. */
 function teamRgb() {
   const hex = /^#([0-9a-f]{6})$/i.exec(state.contract?.color ?? "");
-  if (!hex) return ACCENT;
+  if (!hex) return LINE_FALLBACK;
   let c = [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
   const lum = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
   // Near-black or grey team colours would lift to a dull grey; use the accent for those.
-  if (lum < 0.14 || Math.max(...c) - Math.min(...c) < 40) return ACCENT;
+  if (lum < 0.14 || Math.max(...c) - Math.min(...c) < 40) return LINE_FALLBACK;
   if (lum < 0.5) { const k = (0.5 - lum) / (1 - lum); c = c.map((v) => Math.round(v + (255 - v) * k)); }
   return c.join(",");
 }
@@ -318,9 +346,18 @@ function settled(pts) {
   return out.length ? out : pts.slice(-1);
 }
 
-function drawBandAndLine(allPts, nowX, headY, q, frame) {
-  if (!allPts.length) return;
-  const pts = settled(allPts);
+/** Only the part of the history that is on screen, with sub-second flicker removed. */
+function visibleTicks() {
+  const all = state.ticks;
+  if (!all.length) return all;
+  const tMin = tOf(-80);
+  let lo = 0, hi = all.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (all[m].t < tMin) lo = m + 1; else hi = m; }
+  return settled(all.slice(Math.max(0, lo - 1)));
+}
+
+function drawBand(pts, nowX, q, frame) {
+  if (!pts.length) return;
   // Band: bid to ask over time. Hits are judged on its edges, not the middle line.
   ctx.beginPath();
   for (let i = 0; i < pts.length; i++) {
@@ -330,6 +367,18 @@ function drawBandAndLine(allPts, nowX, headY, q, frame) {
   }
   ctx.fillStyle = C.band + "0.09)"; ctx.fill();
 
+  // Project today's bid and ask across the future so each square shows how far it is.
+  ctx.setLineDash([3, 7]); ctx.lineWidth = 1.4; ctx.lineDashOffset = reduceMotion ? 0 : -frame / 40;
+  for (const p of [q.ask, q.bid]) {
+    const y = yOf(p);
+    ctx.strokeStyle = C.band + "0.7)";
+    ctx.beginPath(); ctx.moveTo(nowX, y); ctx.lineTo(W - 44, y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+
+function drawLine(pts, nowX, headY, frame, busy) {
+  if (!pts.length) return;
   // Mid line, with each 1-cent step eased into an S-curve so it flows.
   ctx.beginPath();
   let started = false, prevY = 0;
@@ -345,49 +394,61 @@ function drawBandAndLine(allPts, nowX, headY, q, frame) {
   }
   const team = teamRgb();
   ctx.lineJoin = "round"; ctx.lineCap = "round";
-  ctx.strokeStyle = `rgba(${team},0.9)`; ctx.lineWidth = 11; ctx.globalAlpha = 0.22; ctx.stroke();
-  ctx.globalAlpha = 1; ctx.strokeStyle = `rgb(${team})`; ctx.lineWidth = 3.2;
-  ctx.shadowColor = `rgba(${team},0.95)`; ctx.shadowBlur = 18; ctx.stroke(); ctx.shadowBlur = 0;
-  if (!reduceMotion) {
+  // dark casing first: keeps the line readable over tiles, rings and sparks
+  ctx.strokeStyle = "rgba(2,4,6,0.8)"; ctx.lineWidth = 8.5; ctx.stroke();
+  if (!state.lite) { ctx.strokeStyle = `rgba(${team},0.9)`; ctx.lineWidth = 11; ctx.globalAlpha = 0.18; ctx.stroke(); ctx.globalAlpha = 1; }
+  ctx.strokeStyle = `rgb(${team})`; ctx.lineWidth = 3.6;
+  if (!state.lite) { ctx.shadowColor = `rgba(${team},0.95)`; ctx.shadowBlur = 14; }
+  ctx.stroke(); ctx.shadowBlur = 0;
+  if (!reduceMotion && !busy && !state.lite) {
     // Light running along the line toward the head: motion without touching the price.
     ctx.setLineDash([22, 320]); ctx.lineDashOffset = -frame / 11;
     ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 3;
     ctx.stroke(); ctx.setLineDash([]);
   }
-
-  // Project today's bid and ask across the future so each square shows how far it is.
-  ctx.setLineDash([3, 7]); ctx.lineWidth = 1.4; ctx.lineDashOffset = reduceMotion ? 0 : -frame / 40;
-  for (const p of [q.ask, q.bid]) {
-    const y = yOf(p);
-    ctx.strokeStyle = C.band + "0.7)";
-    ctx.beginPath(); ctx.moveTo(nowX, y); ctx.lineTo(W - 44, y); ctx.stroke();
-  }
-  ctx.setLineDash([]);
 }
 
 function draw(frame) {
   requestAnimationFrame(draw);
   if (!W || !H) return;
-  ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
-  ctx.clearRect(0, 0, W, H);
   drawOverlay(frame);
+  if (state.view !== "game") return; // nothing to draw behind the lobby or summary
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // If this device can't keep up, drop the expensive blurs for the rest of the session.
+  const dt = frame - state.lastFrame; state.lastFrame = frame;
+  if (!state.lite && dt > 0 && dt < 500) {
+    state.slow = dt > 28 ? state.slow + 1 : Math.max(0, state.slow - 0.25);
+    if (state.slow > 45) state.lite = true;
+  }
   const q = state.quote;
   if (!q) return;
 
   // Camera shake after a win.
-  if (state.shake > 0.3 && !reduceMotion) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
-  state.shake *= 0.86;
+  if (state.shake > 0.3 && !reduceMotion && !state.lite) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
+  state.shake *= 0.8;
 
   // Zoom to the spread: as close as possible while keeping ~4 tappable rows each side on screen.
   // Zoomed in: about three tappable rows each side of the spread, as large as the screen allows.
   // state.zoom then scales that: below 1 shows more rows (further, higher-paying squares).
   const maxH = W < 560 ? 86 : 104;
-  const fitH = clamp(clamp(H / (Math.round((q.ask - q.bid) * 100) + 6.4), 34, maxH) * state.zoom, 13, maxH * 1.5);
+  // The spread flickers by a cent or two; follow it wider at once but narrower only after it has
+  // stayed narrower for a few seconds, so the grid doesn't pump in and out.
+  const spreadRows = Math.round((q.ask - q.bid) * 100);
+  if (spreadRows >= state.spreadHold) { state.spreadHold = spreadRows; state.spreadAt = frame; }
+  else if (frame - state.spreadAt > 5000) { state.spreadHold = spreadRows; state.spreadAt = frame; }
+  const fitH = clamp(clamp(H / (state.spreadHold + 6.4), 34, maxH) * state.zoom, 13, maxH * 1.5);
   CELL_H = state.center === null || reduceMotion ? fitH : CELL_H + (fitH - CELL_H) * 0.06;
 
   const mid = (q.bid + q.ask) / 2;
   if (state.center === null) { state.center = mid; state.shownMid = mid; }
-  state.center += (mid - state.center) * 0.03;
+  // Follow gently when the price drifts, quickly when it runs, so the line never leaves the screen.
+  const rowsOff = Math.abs(mid - state.center) / 0.01;
+  state.center += (mid - state.center) * (rowsOff > 2.5 ? 0.16 : rowsOff > 1.2 ? 0.07 : 0.03);
+  // "Busy" = the price has changed several times in the last few seconds; decoration backs off then.
+  while (state.tickTimes.length && frame - state.tickTimes[0] > 3000) state.tickTimes.shift();
+  const busy = state.tickTimes.length >= 4;
   state.shownMid += (mid - state.shownMid) * (reduceMotion ? 1 : 0.18);
   state.headKick *= 0.9;
 
@@ -398,7 +459,7 @@ function draw(frame) {
   const headY = yOf(state.shownMid);
 
   // ambient motion (decoration only): a few faint motes drifting with the grid
-  if (!reduceMotion) {
+  if (!reduceMotion && !state.lite) {
     if (state.stars.length !== 18) state.stars = Array.from({ length: 18 }, () => ({ x: rand(0, 1), y: rand(0, 1), s: rand(0.6, 1.6), v: rand(0.3, 1), a: rand(0.1, 0.3) }));
     for (const st of state.stars) {
       st.x -= (st.v * 0.00042 * 1280) / Math.max(W, 320);
@@ -531,16 +592,91 @@ function draw(frame) {
   for (let c = col0; c <= col1 + 1; c++) {
     const ts = c * colMs();
     if (ts <= t || c % every) continue;
-    const d = new Date(ts - state.clockSkew);
     ctx.fillStyle = C.label;
-    ctx.fillText(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: state.colSec < 60 ? "2-digit" : undefined }), xOf(ts), H - 9);
+    ctx.fillText(clockLabel(ts), xOf(ts), H - 9);
   }
 
-  // band, line, projected bid/ask
-  drawBandAndLine(state.ticks, nowX, headY, q, frame);
+  // band and projected bid/ask go under everything; the line itself is drawn last
+  const pts = visibleTicks();
+  drawBand(pts, nowX, q, frame);
+
+  // open positions: charge toward the hit, countdown, heartbeat when one cent away
+  let tension = null;
+  for (const p of state.positions) {
+    if (p.status !== "open" || p.symbol !== state.contract?.symbol) continue;
+    const span = p.colMs ?? colMs();
+    const w = (span / colMs()) * CELL_W, x = xOf(p.deadline - span), y = yOf(p.hi);
+    if (x + w < -20 || x > W + 20) continue;
+    const gap = Math.max(0, p.target - sellNow(p, q));
+    p.gap0 ??= Math.max(gap, 0.01);
+    const charge = clamp(1 - gap / p.gap0, 0, 1);
+    const near = gap <= 0.01 + 1e-9;
+    const left = clamp((p.deadline - t) / span, 0, 1);
+    if (near && (!tension || p.deadline < tension.deadline)) tension = p;
+    if (left < 0.4 && (!tension || p.deadline < tension.deadline)) tension ??= p;
+    const age = p.bornAt ? (frame - p.bornAt) / 260 : 1;
+    const s = reduceMotion ? 1 : age < 1 ? 0.6 + 0.4 * easeOutBack(clamp(age, 0, 1)) : 1;
+    const jx = near && !reduceMotion ? Math.sin(frame / 25) * 1.6 : 0, jy = near && !reduceMotion ? Math.cos(frame / 31) * 1.2 : 0;
+    const flick = left < 0.3 && !reduceMotion ? 0.85 + 0.15 * Math.sin(frame / 60) : 1;
+    tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
+      scale: s, alpha: flick, charge, fromTop: p.side === "no", timeLeft: left, near,
+      line1: "+" + fmtAmt(winOf(p)), line2: near ? "1¢ AWAY" : fmtAmt(p.cost) + " in",
+    });
+  }
+  for (const [key, g] of state.ghosts) {
+    const [c, r] = key.split(":").map(Number);
+    const age = clamp((frame - g.bornAt) / 220, 0, 1);
+    tile(xOf(c * colMs()) + CELL_W / 2, yOf((r + 1) / 100) + CELL_H / 2, CELL_W - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
+      scale: reduceMotion ? 1 : 1.35 - 0.35 * easeOutBack(age), alpha: 0.85, line1: "+" + fmtAmt(g.win), line2: fmtAmt(g.cost) + " in",
+    });
+  }
+  // Heartbeat and countdown ticks for the most urgent tile only, so it never turns to noise.
+  if (tension) {
+    const left = tension.deadline - t;
+    const gap = Math.max(0, tension.target - sellNow(tension, q));
+    if (gap <= 0.01 + 1e-9 && frame - state.lastBeat > 950 && (tension.beats ?? 0) < 5) {
+      state.lastBeat = frame; tension.beats = (tension.beats ?? 0) + 1; sfx.beat(); buzz([18, 90, 18]);
+    }
+    const sec = Math.ceil(left / 1000);
+    if (sec <= 3 && sec >= 1 && sec !== state.lastTick) { state.lastTick = sec; sfx.tick(); }
+  }
+
+  // effects on the grid: bursts, rings, sparks, shards, floating amounts
+  state.fx = state.fx.filter((f) => frame - f.t0 < f.life);
+  for (const f of state.fx) {
+    if (frame < f.t0) continue; // staggered effects that haven't started yet
+    const k = (frame - f.t0) / f.life;
+    const x = xOf(f.time) + (f.dx ?? 0), y = yOf(f.price) + (f.dy ?? 0);
+    if (f.kind === "burst") {
+      tile(x, y, f.w, f.h, { scale: 1 + easeOut(k) * 0.6, alpha: 1 - k, tint: f.win ? GREEN : RED, bright: true });
+    } else if (f.kind === "ring") {
+      ctx.strokeStyle = `rgba(${f.rgb},${(1 - k) * (f.a ?? 1)})`; ctx.lineWidth = (f.width ?? 3) * (1 - k) + 0.5;
+      ctx.beginPath(); ctx.arc(x, y, (f.r0 ?? 20) + easeOut(k) * f.size, 0, Math.PI * 2); ctx.stroke();
+    } else if (f.kind === "spark") {
+      const d = easeOut(k) * f.dist;
+      ctx.fillStyle = `rgba(${f.rgb},${1 - k})`;
+      ctx.beginPath(); ctx.arc(x + Math.cos(f.a) * d, y + Math.sin(f.a) * d + k * k * (f.g ?? 30), (f.s ?? 2.6) * (1 - k) + 0.6, 0, Math.PI * 2); ctx.fill();
+    } else if (f.kind === "shard") {
+      const px = x + f.vx * k * 60, py = y + f.vy * k * 60 + k * k * 160;
+      ctx.save(); ctx.translate(px, py); ctx.rotate(f.rot * k); ctx.globalAlpha = 1 - k;
+      ctx.fillStyle = f.color; ctx.fillRect(-f.s / 2, -f.s / 2, f.s, f.s * 0.7); ctx.restore();
+    } else if (f.kind === "text") {
+      ctx.save();
+      ctx.globalAlpha = k < 0.12 ? k / 0.12 : 1 - clamp((k - 0.6) / 0.4, 0, 1);
+      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = `700 ${f.size}px ${FONT}`;
+      ctx.shadowColor = f.color; ctx.shadowBlur = 20; ctx.fillStyle = f.color;
+      const pop = reduceMotion ? 1 : k < 0.18 ? 0.6 + 0.4 * easeOutBack(k / 0.18) : 1;
+      ctx.translate(x, y - easeOut(k) * (f.rise ?? 50)); ctx.scale(pop, pop);
+      ctx.fillText(f.text, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  // the line, over the tiles and effects
+  drawLine(pts, nowX, headY, frame, busy);
 
   // comet trail off the head
-  if (!reduceMotion && (state.headKick > 0.2 || Math.random() < 0.18)) {
+  if (!reduceMotion && !state.lite && (state.headKick > 0.2 || Math.random() < 0.18)) {
     state.trail.push({ t: t, p: state.shownMid + rand(-0.0012, 0.0012), born: frame, life: rand(700, 1300), s: rand(1, 2.6) });
     if (state.trail.length > 60) state.trail.splice(0, state.trail.length - 60);
   }
@@ -600,81 +736,14 @@ function draw(frame) {
       ctx.fillStyle = `rgba(${RED},0.9)`; rr(ctx, bx + 12 + gw + 1, by + 45, full - gw - 1, 4, 2); ctx.fill();
     }
   }
-
-  // open positions: charge toward the hit, countdown, heartbeat when one cent away
-  let tension = null;
-  for (const p of state.positions) {
-    if (p.status !== "open" || p.symbol !== state.contract?.symbol) continue;
-    const span = p.colMs ?? colMs();
-    const w = (span / colMs()) * CELL_W, x = xOf(p.deadline - span), y = yOf(p.hi);
-    if (x + w < -20 || x > W + 20) continue;
-    const gap = Math.max(0, p.target - sellNow(p, q));
-    p.gap0 ??= Math.max(gap, 0.01);
-    const charge = clamp(1 - gap / p.gap0, 0, 1);
-    const near = gap <= 0.01 + 1e-9;
-    const left = clamp((p.deadline - t) / span, 0, 1);
-    if (near && (!tension || p.deadline < tension.deadline)) tension = p;
-    if (left < 0.4 && (!tension || p.deadline < tension.deadline)) tension ??= p;
-    const age = p.bornAt ? (frame - p.bornAt) / 260 : 1;
-    const s = reduceMotion ? 1 : age < 1 ? 0.6 + 0.4 * easeOutBack(clamp(age, 0, 1)) : 1;
-    const jx = near && !reduceMotion ? Math.sin(frame / 25) * 1.6 : 0, jy = near && !reduceMotion ? Math.cos(frame / 31) * 1.2 : 0;
-    const flick = left < 0.3 && !reduceMotion ? 0.85 + 0.15 * Math.sin(frame / 60) : 1;
-    tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
-      scale: s, alpha: flick, charge, fromTop: p.side === "no", timeLeft: left, near,
-      line1: "+" + fmtAmt(winOf(p)), line2: near ? "1¢ AWAY" : fmtAmt(p.cost) + " in",
-    });
-  }
-  for (const [key, g] of state.ghosts) {
-    const [c, r] = key.split(":").map(Number);
-    const age = clamp((frame - g.bornAt) / 220, 0, 1);
-    tile(xOf(c * colMs()) + CELL_W / 2, yOf((r + 1) / 100) + CELL_H / 2, CELL_W - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
-      scale: reduceMotion ? 1 : 1.35 - 0.35 * easeOutBack(age), alpha: 0.85, line1: "+" + fmtAmt(g.win), line2: fmtAmt(g.cost) + " in",
-    });
-  }
-  // Heartbeat and countdown ticks for the most urgent tile only, so it never turns to noise.
-  if (tension) {
-    const left = tension.deadline - t;
-    const gap = Math.max(0, tension.target - sellNow(tension, q));
-    if (gap <= 0.01 + 1e-9 && frame - state.lastBeat > 950) { state.lastBeat = frame; sfx.beat(); buzz([18, 90, 18]); }
-    const sec = Math.ceil(left / 1000);
-    if (sec <= 3 && sec >= 1 && sec !== state.lastTick) { state.lastTick = sec; sfx.tick(); }
-  }
-
-  // effects on the grid: bursts, rings, sparks, shards, floating amounts
-  state.fx = state.fx.filter((f) => frame - f.t0 < f.life);
-  for (const f of state.fx) {
-    if (frame < f.t0) continue; // staggered effects that haven't started yet
-    const k = (frame - f.t0) / f.life;
-    const x = xOf(f.time) + (f.dx ?? 0), y = yOf(f.price) + (f.dy ?? 0);
-    if (f.kind === "burst") {
-      tile(x, y, f.w, f.h, { scale: 1 + easeOut(k) * 0.6, alpha: 1 - k, tint: f.win ? GREEN : RED, bright: true });
-    } else if (f.kind === "ring") {
-      ctx.strokeStyle = `rgba(${f.rgb},${(1 - k) * (f.a ?? 1)})`; ctx.lineWidth = (f.width ?? 3) * (1 - k) + 0.5;
-      ctx.beginPath(); ctx.arc(x, y, (f.r0 ?? 20) + easeOut(k) * f.size, 0, Math.PI * 2); ctx.stroke();
-    } else if (f.kind === "spark") {
-      const d = easeOut(k) * f.dist;
-      ctx.fillStyle = `rgba(${f.rgb},${1 - k})`;
-      ctx.beginPath(); ctx.arc(x + Math.cos(f.a) * d, y + Math.sin(f.a) * d + k * k * (f.g ?? 30), (f.s ?? 2.6) * (1 - k) + 0.6, 0, Math.PI * 2); ctx.fill();
-    } else if (f.kind === "shard") {
-      const px = x + f.vx * k * 60, py = y + f.vy * k * 60 + k * k * 160;
-      ctx.save(); ctx.translate(px, py); ctx.rotate(f.rot * k); ctx.globalAlpha = 1 - k;
-      ctx.fillStyle = f.color; ctx.fillRect(-f.s / 2, -f.s / 2, f.s, f.s * 0.7); ctx.restore();
-    } else if (f.kind === "text") {
-      ctx.save();
-      ctx.globalAlpha = k < 0.12 ? k / 0.12 : 1 - clamp((k - 0.6) / 0.4, 0, 1);
-      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = `700 ${f.size}px ${FONT}`;
-      ctx.shadowColor = f.color; ctx.shadowBlur = 20; ctx.fillStyle = f.color;
-      const pop = reduceMotion ? 1 : k < 0.18 ? 0.6 + 0.4 * easeOutBack(k / 0.18) : 1;
-      ctx.translate(x, y - easeOut(k) * (f.rise ?? 50)); ctx.scale(pop, pop);
-      ctx.fillText(f.text, 0, 0);
-      ctx.restore();
-    }
-  }
 }
 
 /** Full-screen layer: flash, coins flying to the balance, confetti. */
+let overlayPainted = false;
 function drawOverlay(frame) {
-  fctx.clearRect(0, 0, FW, FH);
+  const active = state.flash > 0.01 || state.over.length > 0;
+  if (active || overlayPainted) fctx.clearRect(0, 0, FW, FH);
+  overlayPainted = active;
   if (state.flash > 0.01) {
     fctx.fillStyle = `rgba(${state.flashColor},${state.flash})`;
     fctx.fillRect(0, 0, FW, FH);
@@ -729,6 +798,15 @@ function tapFx(box) {
 function priceFx(up) {
   const t0 = performance.now(), time = now(), price = state.shownMid;
   state.headKick = 1;
+  state.tickTimes.push(t0);
+  // When the price is running, one flare per move would bury the line: show at most ~3 a second,
+  // and just the ring, no sparks or ripple.
+  if (t0 - state.lastFlare < 320) return;
+  state.lastFlare = t0;
+  if (state.tickTimes.length >= 4 || state.lite) {
+    state.fx.push({ kind: "ring", t0, life: 450, time, price, rgb: up ? GREEN : RED, size: 30, r0: 8, width: 2, a: 0.7 });
+    return;
+  }
   const rgb = up ? GREEN : RED;
   state.fx.push({ kind: "ring", t0, life: 600, time, price, rgb, size: 44, r0: 8, width: 2.5 });
   if (!reduceMotion) for (let i = 0; i < 5; i++) state.fx.push({ kind: "spark", t0, life: rand(400, 700), time, price, a: up ? rand(-Math.PI * 0.9, -Math.PI * 0.1) : rand(Math.PI * 0.1, Math.PI * 0.9), dist: rand(20, 46), rgb, g: up ? -10 : 20, s: 2.2 });
@@ -819,19 +897,23 @@ canvas.addEventListener("pointermove", (e) => {
 const endTouch = (e) => { touches.delete(e.pointerId); if (!touches.size && state.pinch) setTimeout(() => (state.pinch = null), 60); };
 canvas.addEventListener("pointercancel", endTouch, true);
 
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("pointerdown", (e) => {
   if (state.pinch) return;
   const box = pointer(e);
-  state.press = box ? { col: box.col, row: box.row } : null;
+  state.press = box ? { col: box.col, row: box.row, x: e.clientX, y: e.clientY } : null;
   if (box) { tone(300, 240, 0.05, "sine", 0.05); buzz(4); }
 });
 canvas.addEventListener("pointerup", async (e) => {
-  const pinched = !!state.pinch;
+  const pinched = !!state.pinch, press = state.press;
   endTouch(e);
   state.press = null;
   if (pinched) return;
   hideCoach();
-  const box = pointer(e);
+  // The grid scrolls and re-centres while a finger is down. Trade the square that was pressed,
+  // not whichever one has slid under the finger; a drag away cancels.
+  if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 18) return;
+  const box = press ? boxFor(press.col, press.row) : null;
   if (!box || !state.contract) { if (state.quote) { sfx.deny(); buzz(6); } return; }
   const key = box.col + ":" + box.row;
   if (state.ghosts.has(key)) return;
@@ -989,7 +1071,9 @@ function openStream() {
       const mid = (d.bid + d.ask) / 2;
       if (state.lastMid !== null && Math.abs(mid - state.lastMid) >= 0.005 - 1e-9) {
         const up = mid > state.lastMid;
-        priceFx(up); up ? sfx.priceUp() : sfx.priceDown(); buzz(5);
+        priceFx(up);
+        const nowMs = performance.now();
+        if (nowMs - state.lastBlip > 260) { state.lastBlip = nowMs; up ? sfx.priceUp() : sfx.priceDown(); }
       }
       state.lastMid = mid;
       if (!$("empty").hidden) { $("empty").hidden = true; maybeCoach(); }
