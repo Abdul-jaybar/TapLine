@@ -6,7 +6,7 @@ import type { Quote } from "../src/server/gemini.ts";
 const SYM = "GEMI-TEST-M-HOME";
 const T0 = 1_000_000;
 
-function setup(bid = 0.6, ask = 0.61, balance = 1000) {
+function setup(bid = 0.6, ask = 0.61, balance = 10_000) {
   const q: Quote = { symbol: SYM, bid, ask, bidSize: 100, askSize: 100, t: T0 };
   const quoteOf = (s: string) => (s === SYM ? q : undefined);
   const origOnQuote = (qq: Quote, t: number) => {
@@ -21,8 +21,9 @@ function setup(bid = 0.6, ask = 0.61, balance = 1000) {
     q.t = t;
     acct.onQuote(q, t);
   };
-  const tap = (lo: number, hi: number, stake = 10, deadline = T0 + 60_000) =>
-    acct.tap({ symbol: SYM, label: "Home", lo, hi, deadline, stake }, T0);
+  // `win` is the profit wanted on a hit; the engine sizes the order to pay it.
+  const tap = (lo: number, hi: number, win = 10, deadline = T0 + 60_000) =>
+    acct.tap({ symbol: SYM, label: "Home", lo, hi, deadline, win }, T0);
   const onQuote = acct.onQuote.bind(acct);
   acct.onQuote = (qq: Quote, t = Date.now()) => { origOnQuote(qq, t); onQuote(q, t); };
   return { acct, move, tap };
@@ -34,8 +35,9 @@ test("box above the line buys YES and rests a sell at the box's near edge", asyn
   assert.equal(p.side, "yes");
   assert.equal(p.entry, 0.61);
   assert.equal(p.target, 0.65);
-  assert.equal(p.quantity, 16.39); // floor(10 / 0.61 * 100) / 100
-  assert.equal(acct.balance, 1000 - p.cost);
+  assert.equal(p.quantity, 250); // $10 to win / 4 cents of move per contract
+  assert.equal(p.cost, 152.5); // 250 contracts at 61 cents
+  assert.equal(acct.balance, 10_000 - p.cost);
 });
 
 test("box below the line buys NO, priced off the YES bid", async () => {
@@ -56,8 +58,8 @@ test("hit: line reaches the box and the position is sold at the target", async (
   await acct.idle();
   assert.equal(p.status, "won");
   assert.equal(p.exit, 0.65);
-  assert.equal(p.pnl, 0.6556); // 16.39 * (0.65 - 0.61)
-  assert.equal(acct.balance, 1000.6556);
+  assert.equal(p.pnl, 10); // exactly the amount asked for
+  assert.equal(acct.balance, 10_010);
 });
 
 test("downward hit: YES ask falls to the box top", async () => {
@@ -80,8 +82,8 @@ test("miss: at the deadline the position exits at the market, not at zero", asyn
   await acct.idle();
   assert.equal(p.status, "expired");
   assert.equal(p.exit, 0.58);
-  assert.equal(p.pnl, -0.4917); // 16.39 * (0.58 - 0.61)
-  assert.equal(acct.balance, 1000 - 0.4917);
+  assert.equal(p.pnl, -7.5); // 250 * (0.58 - 0.61)
+  assert.equal(acct.balance, 10_000 - 7.5);
 });
 
 test("a position is settled only once even if hit and deadline race", async () => {
@@ -91,7 +93,7 @@ test("a position is settled only once even if hit and deadline race", async () =
   acct.sweep(T0 + 60_000);
   await acct.idle();
   assert.equal(p.status, "won");
-  assert.equal(acct.balance, 1000.6556);
+  assert.equal(acct.balance, 10_010);
 });
 
 test("manual close sells at the current bid", async () => {
@@ -107,18 +109,18 @@ test("refusals", async () => {
   const { acct, tap } = setup(0.6, 0.61, 20);
   await assert.rejects(tap(0.6, 0.61), /on the line/); // spread box
   await assert.rejects(tap(0.61, 0.62), /on the line/); // touching the ask: no profit after the spread
-  await assert.rejects(tap(0.65, 0.66, 0.5), /stake must be/);
-  await assert.rejects(tap(0.65, 0.66, 500), /stake must be/);
+  await assert.rejects(tap(0.65, 0.66, 0.1), /win amount must be/);
+  await assert.rejects(tap(0.65, 0.66, 1000), /win amount must be/);
   await assert.rejects(tap(0.65, 0.66, 10, T0 + 1000), /closing/);
-  await assert.rejects(tap(0.65, 0.66, 50), /not enough balance/);
+  await assert.rejects(tap(0.65, 0.66, 10), /needs \$153 to win \$10; not enough balance/);
   await assert.rejects(tap(0.995, 1.0), /outside/);
-  await assert.rejects(acct.tap({ symbol: "NOPE", label: "", lo: 0.65, hi: 0.66, deadline: T0 + 60_000, stake: 5 }, T0), TapError);
+  await assert.rejects(acct.tap({ symbol: "NOPE", label: "", lo: 0.65, hi: 0.66, deadline: T0 + 60_000, win: 5 }, T0), TapError);
   assert.equal(acct.balance, 20);
   assert.equal(acct.positions.length, 0);
 });
 
 test("two simultaneous taps cannot overspend the balance", async () => {
-  const { acct, tap } = setup(0.6, 0.61, 15);
+  const { acct, tap } = setup(0.6, 0.61, 200); // enough for either tap, not both
   const results = await Promise.allSettled([tap(0.65, 0.66, 10), tap(0.66, 0.67, 10)]);
   assert.deepEqual(results.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
   assert.ok(acct.balance >= 0);
@@ -126,7 +128,7 @@ test("two simultaneous taps cannot overspend the balance", async () => {
 
 test("exposure cap", async () => {
   const { tap } = setup();
-  for (let i = 0; i < 5; i++) await tap(0.65, 0.66, 100);
+  for (let i = 0; i < 3; i++) await tap(0.65, 0.66, 100); // $1,525 each
   await assert.rejects(tap(0.65, 0.66, 100), /capped/);
 });
 
@@ -191,10 +193,20 @@ test("one-sided market refuses new taps", async () => {
   await assert.rejects(tap(0.65, 0.66), /one-sided/);
 });
 
-test("planTap multiple matches what a hit pays", () => {
+test("planTap sizes the order to win the requested amount", () => {
   const q: Quote = { symbol: SYM, bid: 0.15, ask: 0.18, bidSize: 1, askSize: 1, t: T0 };
   const plan = planTap(q, 0.25, 0.26, 10);
   assert.equal(plan.side, "yes");
   assert.ok(Math.abs(plan.multiple - 0.25 / 0.18) < 1e-9);
-  assert.equal(plan.profitIfHit, 3.8885); // 55.55 contracts * 0.07
+  assert.equal(plan.quantity, 142.85); // 10 / 0.07, rounded down to a hundredth of a contract
+  assert.equal(plan.profitIfHit, 9.9995); // never more than asked, short by under a cent
+  assert.equal(plan.cost, 25.713);
+});
+
+test("a far square costs much less than a near one for the same win", () => {
+  const q: Quote = { symbol: SYM, bid: 0.6, ask: 0.61, bidSize: 1, askSize: 1, t: T0 };
+  const near = planTap(q, 0.62, 0.63, 10); // 1 cent of move
+  const far = planTap(q, 0.71, 0.72, 10); // 10 cents of move
+  assert.equal(near.cost, 610);
+  assert.equal(far.cost, 61);
 });

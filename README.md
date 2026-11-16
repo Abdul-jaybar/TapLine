@@ -24,7 +24,7 @@ Gemini contracts settle at the end of the game, not in 30 seconds, so a box is a
 | A box below the line | Buy NO now, rest a sell where YES falls to the box's near edge. Hit when the YES ask falls to it |
 | The deadline passes | Cancel the resting sell, exit at the market |
 
-The number in each box is the payout multiple if it hits: target price divided by entry price.
+You choose how much a hit should pay ("win per hit": $1, $5, $10, $25 or a custom amount). The move from entry to a square is only a few cents per contract, so the order is sized to pay your amount: contracts = win / (target price - entry price). The number in each empty square is what that position costs. A square one cent away needs a large position; a far square needs a small one. A miss exits at the market price, so the loss depends on how far the price moved against you, not on the amount you chose to win.
 
 The chart draws the bid/ask band, not just the middle line, because hits are judged on the band's edges: when the spread is wide, the middle line can cross a box that nobody would actually buy from you at. A miss says how close it got ("Missed by 2¢").
 
@@ -48,6 +48,13 @@ Open http://localhost:8787. No API key is needed: market data is public and orde
 npm test
 ```
 
+## Screens
+
+- **Lobby**: the start screen. Pick a live game and press Join.
+- **Game**: the grid. "Change" in the header goes back to the lobby; open positions keep running.
+- **Summary**: balance, net profit, hit rate, won on hits, lost on misses, best streak and recent results, from your most recent 200 squares.
+- **Leaderboard**: a "coming soon" placeholder. Nothing is ranked yet.
+
 ## Status
 
 | Piece | State |
@@ -58,7 +65,7 @@ npm test
 | Tile animations, win and miss effects, sounds, vibration | Working. Sounds are synthesized in the browser and can be muted. Vibration works on Android; iPhones don't support it in the browser |
 | Live moves from the rest of the game | Working: every 1¢ move in the game's main markets shows as a pill you can tap to jump to |
 | Tap engine (entry, target, deadline, limits) | Working, covered by `npm test` |
-| Order fills | Paper: filled at the live best bid/ask, starting balance $1,000 |
+| Order fills | Paper: filled at the live best bid/ask, starting balance $10,000 |
 | Real Gemini orders | Not built yet. `Broker` in `engine.ts` is the interface to implement |
 | Log in with Gemini (OAuth) | Not built yet |
 
@@ -66,7 +73,7 @@ Paper fills ignore order-book depth and fees, so real results will be somewhat w
 
 ## Safety limits
 
-Enforced on the server for every tap (`DEFAULT_LIMITS` in `engine.ts`): $1 to $100 per tap, at most $500 in open positions, and the price is always taken from the server's own quote, never from the browser.
+Enforced for every tap (`DEFAULT_LIMITS` in `engine.ts`, mirrored in `public/local.js`): a tap can be sized to win $0.50 to $500, at most $5,000 can sit in open positions, a position can't cost more than the balance, and the price is always taken from the engine's own quote, never from what the page drew. The paper account starts at $10,000.
 
 ## Look
 

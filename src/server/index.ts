@@ -34,7 +34,7 @@ interface Session {
   listeners: Set<Listener>;
 }
 const sessions = new Map<string, Session>();
-const PAPER_START = 1000;
+const PAPER_START = 10_000;
 
 function sessionFor(id: string): Session {
   let s = sessions.get(id);
@@ -93,11 +93,11 @@ app.get("/api/account", (c) => {
 });
 
 app.post("/api/tap", async (c) => {
-  const b = await c.req.json<{ sid?: string; symbol?: string; lo?: number; hi?: number; deadline?: number; stake?: number }>();
+  const b = await c.req.json<{ sid?: string; symbol?: string; lo?: number; hi?: number; deadline?: number; win?: number }>();
   if (!SESSION_ID.test(b.sid ?? "")) return c.json({ error: "bad session" }, 400);
   const contract = SYMBOL.test(b.symbol ?? "") ? knownContract(b.symbol!) : undefined;
   if (!contract) return c.json({ error: "unknown contract" }, 400);
-  if (![b.lo, b.hi, b.deadline, b.stake].every((n) => typeof n === "number" && Number.isFinite(n))) {
+  if (![b.lo, b.hi, b.deadline, b.win].every((n) => typeof n === "number" && Number.isFinite(n))) {
     return c.json({ error: "bad request" }, 400);
   }
   try {
@@ -107,7 +107,7 @@ app.post("/api/tap", async (c) => {
       lo: b.lo!,
       hi: b.hi!,
       deadline: b.deadline!,
-      stake: b.stake!,
+      win: b.win!,
     });
     return c.json({ position });
   } catch (err) {

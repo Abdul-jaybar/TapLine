@@ -11,10 +11,15 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23f95e01'/%3E%3Cpath d='M4.5 15.5h5.2l3.2-7h2.6' fill='none' stroke='%23fff' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='17.6' cy='8.5' r='2.4' fill='%23fff'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body data-view="lobby">
 <header class="top">
   <div class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#f95e01"/><path d="M4.5 15.5h5.2l3.2-7h2.6" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17.6" cy="8.5" r="2.4" fill="#fff"/></svg><span>TapLine</span></div>
-  <button id="gameBtn" class="game-btn glass" aria-haspopup="dialog"><span class="live"></span><span id="gameTitle">Loading live games…</span><span class="caret">▾</span></button>
+  <button id="gameBtn" class="game-btn glass" aria-label="Back to the lobby to change game"><span class="live"></span><span id="gameTitle"></span><span class="caret">Change</span></button>
+  <nav class="views" id="views" aria-label="Sections">
+    <button data-view="lobby">Lobby</button>
+    <button data-view="summary">Summary</button>
+    <button data-view="leaderboard">Leaderboard <em>Soon</em></button>
+  </nav>
   <div class="spacer"></div>
   <div class="wallet glass" id="wallet"><span class="mode" id="mode">PAPER</span><span id="balance">$0.00</span><span class="delta" id="delta"></span></div>
 </header>
@@ -24,21 +29,22 @@
 
 <main class="stage">
   <canvas id="grid" aria-label="Live odds grid. Tap a box to trade."></canvas>
-  <div class="empty" id="empty">Loading live games from Gemini…</div>
+  <div class="empty" id="empty">Waiting for a live price…</div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <div class="streak" id="streak" aria-live="polite"></div>
   <div class="activity" id="activity" aria-label="Live moves in this game"></div>
   <div class="coach" id="coach" hidden>
-    <b>Tap any square.</b> It pays if the price reaches it before its column passes the line.
-    <span>Above the line, the bottom of the glowing band has to reach the square. Below, the top does.</span>
+    <b>Tap any square.</b> It pays your chosen amount if the price reaches it before its column passes the line.
+    <span>Above the line, the bottom of the band has to reach the square. Below, the top does.</span>
   </div>
 </main>
 <canvas id="fx" aria-hidden="true"></canvas>
 
 <footer class="controls">
-  <div class="group" role="group" aria-label="Amount per tap">
-    <span class="lbl">Per tap</span>
+  <div class="group" role="group" aria-label="Amount to win per hit">
+    <span class="lbl">Win per hit</span>
     <div id="stakes" class="seg glass"></div>
+    <label class="custom glass"><span>$</span><input id="customWin" type="number" inputmode="decimal" min="0.5" max="500" step="0.5" placeholder="Custom" aria-label="Custom amount to win per hit"></label>
   </div>
   <div class="group" role="group" aria-label="Time per column">
     <span class="lbl">Column</span>
@@ -52,10 +58,44 @@
   <button id="posBtn" class="pos-btn glass">Positions <span id="posCount">0</span></button>
 </footer>
 
-<dialog id="gameDlg" class="sheet">
-  <div class="sheet-head"><h2>Live games</h2><button class="x" data-close aria-label="Close">×</button></div>
-  <div id="gameList" class="list"></div>
-</dialog>
+<!-- Start screen: choose a live game, then join. -->
+<section class="view" id="lobby" aria-label="Lobby">
+  <div class="view-inner">
+    <h1>Pick a live game</h1>
+    <p class="lede">These games are trading on Gemini right now. Choose one and join to start tapping.</p>
+    <div id="lobbyGames" class="cards" role="listbox" aria-label="Live games"></div>
+  </div>
+  <div class="joinbar glass">
+    <div class="join-info"><span class="join-label">Selected</span><b id="joinTitle">Choose a game</b></div>
+    <button id="joinBtn" class="cta" disabled>Join</button>
+  </div>
+</section>
+
+<section class="view" id="summary" aria-label="Summary">
+  <div class="view-inner">
+    <h1>Your summary</h1>
+    <p class="lede" id="summaryNote">Paper account. Covers your most recent 200 squares.</p>
+    <div id="stats" class="stats"></div>
+    <h2>Recent results</h2>
+    <div id="recent" class="results glass"></div>
+    <button id="resetBtn" class="ghost-btn" hidden>Reset paper account</button>
+  </div>
+</section>
+
+<section class="view" id="leaderboard" aria-label="Leaderboard">
+  <div class="view-inner">
+    <h1>Leaderboard <span class="soon">Coming soon</span></h1>
+    <p class="lede">Rankings by profit and hit rate for everyone playing the same game. We're building it.</p>
+    <div class="board glass" aria-hidden="true">
+      <div class="board-row"><span>1</span><i style="width:62%"></i><i class="short"></i></div>
+      <div class="board-row"><span>2</span><i style="width:48%"></i><i class="short"></i></div>
+      <div class="board-row"><span>3</span><i style="width:55%"></i><i class="short"></i></div>
+      <div class="board-row"><span>4</span><i style="width:40%"></i><i class="short"></i></div>
+      <div class="board-row"><span>5</span><i style="width:51%"></i><i class="short"></i></div>
+      <div class="board-cover">Coming soon</div>
+    </div>
+  </div>
+</section>
 
 <dialog id="posDlg" class="sheet">
   <div class="sheet-head"><h2>Positions</h2><button class="x" data-close aria-label="Close">×</button></div>

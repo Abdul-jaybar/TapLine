@@ -8,9 +8,9 @@ const REST = "https://api.gemini.com";
 const WS = "wss://ws.gemini.com";
 const MAX_SPREAD = 0.1;
 const EXIT_GRACE_MS = 20_000;
-const START_BALANCE = 1000;
-const LIMITS = { minStake: 1, maxStake: 100, maxExposure: 500, minLeadMs: 3000, maxLeadMs: 60 * 60_000 };
-const STORE_KEY = "tapline.paper.v1";
+const START_BALANCE = 10_000;
+const LIMITS = { minWin: 0.5, maxWin: 500, maxExposure: 5000, minLeadMs: 3000, maxLeadMs: 60 * 60_000 };
+const STORE_KEY = "tapline.paper.v2";
 
 const round = (n, dp) => Math.round(n * 10 ** dp) / 10 ** dp;
 const px = (n) => round(n, 2);
@@ -22,7 +22,8 @@ const sideQuote = (q, side) =>
 
 class TapError extends Error {}
 
-function planTap(q, lo, hi, stake) {
+// `win` is the profit wanted if the square hits; the order is sized to pay exactly that.
+function planTap(q, lo, hi, win) {
   if (q.bid == null || q.ask == null) throw new TapError("the market is one-sided right now, try again in a moment");
   let side, target;
   if (lo >= q.ask + 0.01 - 1e-9) { side = "yes"; target = px(lo); }
@@ -30,8 +31,8 @@ function planTap(q, lo, hi, stake) {
   else throw new TapError("that box is on the line, pick one further away");
   const entry = sideQuote(q, side).ask;
   if (!(entry > 0 && entry < 1) || !(target > entry && target < 1)) throw new TapError("no room to profit in that box");
-  const quantity = qtyFloor(stake / entry);
-  if (quantity < 0.01) throw new TapError("stake too small for this price");
+  const quantity = qtyFloor(win / (target - entry));
+  if (quantity < 0.01) throw new TapError("amount too small for this square");
   return { side, entry, target, quantity, cost: money(quantity * entry) };
 }
 
@@ -221,15 +222,15 @@ export function createLocalBackend() {
       const now = Date.now();
       const contract = knownContract(req.symbol);
       if (!contract) throw new TapError("unknown contract");
-      if (!(req.stake >= LIMITS.minStake && req.stake <= LIMITS.maxStake)) throw new TapError(`stake must be $${LIMITS.minStake} to $${LIMITS.maxStake}`);
+      if (!(req.win >= LIMITS.minWin && req.win <= LIMITS.maxWin)) throw new TapError(`win amount must be $${LIMITS.minWin} to $${LIMITS.maxWin}`);
       if (!(req.lo >= 0.01 && req.hi <= 0.99 + 1e-9 && req.hi > req.lo)) throw new TapError("box is outside the tradable range");
       if (req.deadline < now + LIMITS.minLeadMs) throw new TapError("that column is closing, pick a later one");
       if (req.deadline > now + LIMITS.maxLeadMs) throw new TapError("that deadline is too far out");
       const q = feed.quotes.get(req.symbol);
       if (!q) throw new TapError("no live price for this contract yet");
       if (now - q.t > 5 * 60_000) throw new TapError("price is stale, market may be paused");
-      const plan = planTap(q, px(req.lo), px(req.hi), req.stake);
-      if (plan.cost > acct.balance + 1e-9) throw new TapError("not enough balance");
+      const plan = planTap(q, px(req.lo), px(req.hi), req.win);
+      if (plan.cost > acct.balance + 1e-9) throw new TapError(`that square needs $${Math.ceil(plan.cost)} to win $${req.win}; not enough balance`);
       if (exposure() + plan.cost > LIMITS.maxExposure + 1e-9) throw new TapError(`open positions are capped at $${LIMITS.maxExposure}`);
       acct.balance = money(acct.balance - plan.cost);
       const p = {
@@ -240,6 +241,12 @@ export function createLocalBackend() {
       acct.positions.push(p);
       emit(p); // also tells the page its new balance
       return { position: { ...p } };
+    },
+    /** Start the paper account over. */
+    async reset() {
+      acct = { balance: START_BALANCE, positions: [] };
+      save();
+      return { balance: acct.balance };
     },
     async close(id) {
       const p = acct.positions.find((x) => x.id === id);

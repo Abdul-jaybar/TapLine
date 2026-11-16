@@ -7,9 +7,12 @@
 // band) falls to it. The band is drawn so what you see is what counts.
 
 const $ = (id) => document.getElementById(id);
-const fmtMoney = (n) => (n < 0 ? "-" : "") + "$" + Math.abs(n).toFixed(2);
-const fmtSigned = (n) => (n >= 0 ? "+" : "-") + "$" + Math.abs(n).toFixed(2);
+const money2 = (n) => Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtMoney = (n) => (n < 0 ? "-" : "") + "$" + money2(n);
+const fmtSigned = (n) => (n >= 0 ? "+" : "-") + "$" + money2(n);
 const cents = (p) => Math.round(p * 100) + "¢";
+/** Whole dollars when that is exact or the amount is large, cents otherwise. */
+const fmtAmt = (n) => "$" + (Math.abs(n - Math.round(n)) < 0.005 || n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(2));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rand = (a, b) => a + Math.random() * (b - a);
 const store = {
@@ -20,7 +23,7 @@ const store = {
 let sid = store.get("tapline.sid");
 if (!sid) { sid = crypto.randomUUID().replaceAll("-", ""); store.set("tapline.sid", sid); }
 
-const STAKES = [1, 5, 10, 25];
+const WINS = [1, 5, 10, 25];
 const COLS = [5, 10, 30, 60];
 const COL_LABEL = { 5: "5s", 10: "10s", 30: "30s", 60: "1m" };
 const MAX_SPREAD = 0.1;
@@ -40,7 +43,8 @@ const state = {
   games: [], game: null, market: null, contract: null,
   ticks: [], quote: null, shownMid: null, lastMid: null,
   positions: [], balance: 0, balanceShown: 0, limits: null,
-  stake: 5, colSec: 10,
+  win: clamp(Number(store.get("tapline.win")) || 5, 0.5, 500), colSec: 10,
+  view: "lobby", pick: null, gamesError: null, gamesLoaded: false,
   clockSkew: 0, center: null,
   thin: false, hover: null, press: null, zoom: clamp(Number(store.get("tapline.zoom")) || 1, 0.25, 1.5), pinch: null, ghosts: new Map(), stars: [], sizes: null,
   fx: [], over: [], marks: [], trail: [], ripples: [],
@@ -54,7 +58,7 @@ const drawable = (q) => q && q.bid != null && q.ask != null && q.bid > 0 && q.as
 // ---------- sound: synthesized cues, no audio files ----------
 let audio = null, noiseBuf = null;
 function ac() {
-  if (!state.sound) return null;
+  if (!state.sound || state.view !== "game") return null; // no trading sounds from behind the lobby
   try {
     audio ??= new (window.AudioContext || window.webkitAudioContext)();
     if (audio.state === "suspended") audio.resume();
@@ -181,6 +185,13 @@ function planBox(lo, hi) {
   if (!(entry > 0 && entry < 1 && target > entry && target < 1)) return null;
   return { side, entry, target, multiple: target / entry };
 }
+/** Contracts and cost needed for this square to pay state.win if it hits. */
+function sizeFor(plan) {
+  const qty = Math.floor((state.win / (plan.target - plan.entry)) * 100) / 100;
+  return { qty, cost: qty * plan.entry };
+}
+const winOf = (p) => Math.round(p.quantity * (p.target - p.entry) * 100) / 100;
+
 /** The price this position could sell at right now, in its own side's terms. */
 const sellNow = (p, q) => (p.side === "yes" ? q.bid : 1 - q.ask);
 
@@ -468,34 +479,36 @@ function draw(frame) {
         ctx.fillStyle = hl; rr(ctx, cx - CELL_W / 2 + inset + 2, cy - CELL_H / 2 + inset + 2, CELL_W - inset * 2 - 4, CELL_H * 0.42, Math.max(rad - 2, 1)); ctx.fill();
         if (pressed) { ctx.strokeStyle = `rgba(${ACCENT},0.8)`; ctx.lineWidth = 1.5; rr(ctx, cx - CELL_W / 2 + 1.5, cy - CELL_H / 2 + 1.5, CELL_W - 3, CELL_H - 3, rad + 4); ctx.stroke(); }
         ctx.restore();
-        const qty = Math.floor((state.stake / plan.entry) * 100) / 100;
-        const gain = "+" + fmtMoney(qty * (plan.target - plan.entry));
+        const { cost } = sizeFor(plan);
+        const gain = "Win " + fmtAmt(state.win), costTxt = "costs " + fmtAmt(cost);
         if (CELL_H >= 40) {
           const fs = clamp(Math.round(CELL_H * 0.26), 14, 24);
-          ctx.fillStyle = "#ffffff"; ctx.font = `700 ${fs}px ${FONT}`;
-          ctx.fillText(plan.multiple.toFixed(2) + "x", cx, cy - fs * 0.42);
-          ctx.fillStyle = C.win; ctx.font = `700 ${Math.max(11, Math.round(fs * 0.62))}px ${FONT}`;
-          ctx.fillText(gain, cx, cy + fs * 0.55);
+          ctx.fillStyle = C.win; ctx.font = `700 ${fs}px ${FONT}`;
+          ctx.fillText(gain, cx, cy - fs * 0.42);
+          ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.font = `600 ${Math.max(12, Math.round(fs * 0.66))}px ${FONT}`;
+          ctx.fillText(costTxt, cx, cy + fs * 0.6);
         } else {
-          // Row too short for two lines: show the payout in a tag above the square.
+          // Row too short for two lines: show it in a tag above the square.
           ctx.font = `700 ${clamp(Math.round(CELL_H * 0.5), 9, 15)}px ${FONT}`; ctx.fillStyle = "#fff";
-          ctx.fillText(plan.multiple.toFixed(2) + "x", cx, cy);
-          const tag = `${plan.multiple.toFixed(2)}x  ${gain}`;
-          ctx.font = `700 13px ${FONT}`;
-          const tw = ctx.measureText(tag).width + 16, ty = Math.max(14, cy - CELL_H / 2 - 16);
+          ctx.fillText(fmtAmt(cost), cx, cy);
+          const tag = `${gain} · ${costTxt}`;
+          ctx.font = `700 14px ${FONT}`;
+          const tw = ctx.measureText(tag).width + 18, ty = Math.max(14, cy - CELL_H / 2 - 16);
           ctx.fillStyle = "rgba(6,10,12,0.92)"; ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 1;
-          rr(ctx, cx - tw / 2, ty - 11, tw, 22, 11); ctx.fill(); ctx.stroke();
+          rr(ctx, cx - tw / 2, ty - 12, tw, 24, 12); ctx.fill(); ctx.stroke();
           ctx.fillStyle = C.win; ctx.fillText(tag, cx, ty + 0.5);
         }
       } else {
         // Bigger payouts read brighter; squares near the price shimmer.
-        const heat = clamp((plan.multiple - 1) / 0.4, 0, 1);
+        const { cost } = sizeFor(plan);
+        const afford = cost <= state.balance + 1e-9;
+        const heat = afford ? clamp((plan.multiple - 1) / 0.4, 0, 1) : 0;
         const near = clamp(1 - Math.abs((r + 0.5) / 100 - mid) / 0.06, 0, 1);
         const shimmer = reduceMotion ? 0 : near * 0.25 * (0.5 + 0.5 * Math.sin(frame / 260 + c * 0.9));
         const [cr, cg, cb] = C.mult;
-        ctx.fillStyle = `rgba(${cr + (255 - cr) * heat * 0.6},${cg + (255 - cg) * heat * 0.6},${cb},${clamp((0.4 + 0.5 * heat + shimmer) * fadeIn, 0, 1)})`;
+        ctx.fillStyle = `rgba(${cr + (255 - cr) * heat * 0.6},${cg + (255 - cg) * heat * 0.6},${cb},${clamp((afford ? 0.45 + 0.5 * heat + shimmer : 0.16) * fadeIn, 0, 1)})`;
         ctx.font = `${heat > 0.5 ? 700 : 600} ${clamp(Math.round(CELL_H * 0.46), 10, 19)}px ${FONT}`;
-        ctx.fillText(plan.multiple.toFixed(2) + "X", cx, cy);
+        ctx.fillText(fmtAmt(cost), cx, cy);
       }
     }
   }
@@ -608,14 +621,14 @@ function draw(frame) {
     const flick = left < 0.3 && !reduceMotion ? 0.85 + 0.15 * Math.sin(frame / 60) : 1;
     tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
       scale: s, alpha: flick, charge, fromTop: p.side === "no", timeLeft: left, near,
-      line1: "$" + Math.round(p.cost), line2: near ? "1¢ AWAY" : (p.multiple ? p.multiple.toFixed(2) + "X" : ""),
+      line1: "+" + fmtAmt(winOf(p)), line2: near ? "1¢ AWAY" : fmtAmt(p.cost) + " in",
     });
   }
   for (const [key, g] of state.ghosts) {
     const [c, r] = key.split(":").map(Number);
     const age = clamp((frame - g.bornAt) / 220, 0, 1);
     tile(xOf(c * colMs()) + CELL_W / 2, yOf((r + 1) / 100) + CELL_H / 2, CELL_W - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
-      scale: reduceMotion ? 1 : 1.35 - 0.35 * easeOutBack(age), alpha: 0.85, line1: "$" + g.stake, line2: g.multiple.toFixed(2) + "X",
+      scale: reduceMotion ? 1 : 1.35 - 0.35 * easeOutBack(age), alpha: 0.85, line1: "+" + fmtAmt(g.win), line2: fmtAmt(g.cost) + " in",
     });
   }
   // Heartbeat and countdown ticks for the most urgent tile only, so it never turns to noise.
@@ -823,10 +836,10 @@ canvas.addEventListener("pointerup", async (e) => {
   const key = box.col + ":" + box.row;
   if (state.ghosts.has(key)) return;
   const span = colMs(), symbol = state.contract.symbol;
-  state.ghosts.set(key, { bornAt: performance.now(), stake: state.stake, multiple: box.plan.multiple });
+  state.ghosts.set(key, { bornAt: performance.now(), win: state.win, cost: sizeFor(box.plan).cost, multiple: box.plan.multiple });
   sfx.tap(box.plan.multiple); buzz(12); tapFx(box);
   try {
-    const { position } = await backend.tap({ symbol, lo: box.lo, hi: box.hi, deadline: box.deadline, stake: state.stake });
+    const { position } = await backend.tap({ symbol, lo: box.lo, hi: box.hi, deadline: box.deadline, win: state.win });
     upsertPosition({ ...position, colMs: span, bornAt: state.ghosts.get(key)?.bornAt, multiple: position.target / position.entry });
   } catch (err) {
     sfx.deny(); buzz(30);
@@ -842,6 +855,7 @@ function upsertPosition(p) {
   if (i === -1) state.positions.push(p);
   else state.positions[i] = { ...state.positions[i], ...p };
   renderPositions();
+  if (state.view === "summary") renderSummary();
 }
 
 function renderPositions() {
@@ -1046,38 +1060,146 @@ function selectMarket(m) {
 }
 function selectGame(g) { state.game = g; selectMarket(g.markets[0]); }
 
-function renderGameList() {
-  const list = $("gameList");
-  list.replaceChildren();
-  if (!state.games.length) { list.innerHTML = '<div class="none">No live games right now.</div>'; return; }
-  for (const g of state.games) {
-    const b = document.createElement("button"); b.className = "row";
-    b.innerHTML = '<div class="main"><div class="title"></div><div class="sub"></div></div><div class="num sub"></div>';
-    b.querySelector(".title").textContent = g.title;
-    b.querySelector(".main .sub").textContent = `${g.league} · ${g.markets.length} market${g.markets.length === 1 ? "" : "s"}`;
-    b.querySelector(".num").textContent = "$" + Math.round(g.volume24h).toLocaleString() + " today";
-    b.onclick = () => { selectGame(g); $("gameDlg").close(); };
-    list.append(b);
+function setWin(v) {
+  state.win = v; store.set("tapline.win", String(v));
+  renderWins();
+}
+function renderWins() {
+  seg($("stakes"), WINS, (v) => "$" + v, () => state.win, setWin);
+  const isCustom = !WINS.includes(state.win);
+  $("customWin").closest(".custom").classList.toggle("on", isCustom);
+  if (isCustom) $("customWin").value = state.win; else if (document.activeElement !== $("customWin")) $("customWin").value = "";
+}
+
+// ---------- sections ----------
+function setView(v) {
+  if (v === "game" && !state.game) v = "lobby";
+  state.view = v;
+  document.body.dataset.view = v;
+  for (const b of document.querySelectorAll("#views button")) {
+    if (b.dataset.view === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
   }
+  if (v === "lobby") renderLobby();
+  if (v === "summary") renderSummary();
+  if (v === "game") requestAnimationFrame(resize);
+  scrollTo(0, 0);
+}
+
+const inPlay = (g) => g.markets[0]?.contracts.some((c) => drawable(c) && (c.bid + c.ask) / 2 > 0.12 && (c.bid + c.ask) / 2 < 0.88) ?? false;
+
+function renderLobby() {
+  const wrap = $("lobbyGames");
+  wrap.replaceChildren();
+  if (!state.games.length) {
+    const note = document.createElement("div"); note.className = "cards-note";
+    note.textContent = !state.gamesLoaded ? "Loading live games from Gemini…" : state.gamesError ? "Couldn't reach Gemini: " + state.gamesError : "No games are live right now. Check back at game time.";
+    wrap.append(note);
+  }
+  if (!state.games.some((g) => g.id === state.pick)) state.pick = state.games.find(inPlay)?.id ?? state.games[0]?.id ?? null;
+  for (const g of state.games) {
+    const live = inPlay(g);
+    const card = document.createElement("button");
+    card.className = "card glass"; card.setAttribute("role", "option"); card.setAttribute("aria-selected", String(g.id === state.pick));
+    card.innerHTML = '<div class="card-top"><span class="league"></span><span class="livetag"><i></i><span></span></span></div><div class="card-title"></div><div class="teams"></div><div class="card-foot"><span></span><span></span></div>';
+    card.querySelector(".league").textContent = g.league;
+    card.querySelector(".livetag").classList.toggle("quiet", !live);
+    card.querySelector(".livetag span").textContent = live ? "LIVE" : "QUIET";
+    card.querySelector(".card-title").textContent = g.title;
+    const teams = card.querySelector(".teams");
+    for (const c of g.markets[0].contracts.slice(0, 2)) {
+      const row = document.createElement("div"); row.className = "team";
+      if (/^#[0-9a-f]{6}$/i.test(c.color ?? "")) row.style.setProperty("--c", c.color);
+      const pct = c.bid != null && c.ask != null ? Math.round(((c.bid + c.ask) / 2) * 100) : null;
+      row.innerHTML = '<span class="dot"></span><span></span><b></b><div class="bar"><i></i></div>';
+      row.children[1].textContent = c.label;
+      row.children[2].textContent = pct == null ? "no price" : pct + "%";
+      row.querySelector(".bar i").style.width = (pct ?? 0) + "%";
+      teams.append(row);
+    }
+    const foot = card.querySelector(".card-foot");
+    foot.children[0].textContent = "$" + Math.round(g.volume24h).toLocaleString() + " traded today";
+    foot.children[1].textContent = g.markets.length + (g.markets.length === 1 ? " market" : " markets");
+    card.onclick = () => { state.pick = g.id; renderLobby(); };
+    card.ondblclick = () => join();
+    wrap.append(card);
+  }
+  const picked = state.games.find((g) => g.id === state.pick);
+  $("joinTitle").textContent = picked ? picked.title : "Choose a game";
+  $("joinBtn").disabled = !picked;
+}
+
+function join() {
+  const g = state.games.find((x) => x.id === state.pick);
+  if (!g) return;
+  if (state.game?.id !== g.id) selectGame(g);
+  setView("game");
+}
+
+function renderSummary() {
+  const closed = state.positions.filter((p) => p.status !== "open").sort((a, b) => (a.closedAt ?? 0) - (b.closedAt ?? 0));
+  const open = state.positions.filter((p) => p.status === "open");
+  const sum = (ps, f) => ps.reduce((s, p) => s + f(p), 0);
+  const wins = closed.filter((p) => p.status === "won"), misses = closed.filter((p) => p.status === "expired");
+  const net = sum(closed, (p) => p.pnl ?? 0);
+  let streak = 0, best = 0;
+  for (const p of closed) { if (p.status === "won") best = Math.max(best, ++streak); else if (p.status === "expired") streak = 0; }
+  const decided = wins.length + misses.length;
+  const stats = [
+    ["Balance", fmtMoney(state.balance), open.length ? `${fmtMoney(sum(open, (p) => p.cost))} in ${open.length} open` : "nothing open"],
+    ["Net profit", fmtSigned(net), `across ${closed.length} settled`, net >= 0 ? "pos" : "neg"],
+    ["Hit rate", decided ? Math.round((wins.length / decided) * 100) + "%" : "–", `${wins.length} hit, ${misses.length} timed out`],
+    ["Won on hits", fmtMoney(sum(wins, (p) => p.pnl ?? 0)), wins.length ? `biggest ${fmtMoney(Math.max(...wins.map((p) => p.pnl ?? 0)))}` : "no hits yet", "pos"],
+    ["Lost on misses", fmtMoney(Math.abs(sum(closed.filter((p) => (p.pnl ?? 0) < 0), (p) => p.pnl))), "exits at market price", "neg"],
+    ["Best streak", best ? best + " in a row" : "–", "hits without a miss"],
+  ];
+  $("stats").replaceChildren(...stats.map(([label, value, sub, tone]) => {
+    const el = document.createElement("div"); el.className = "stat glass";
+    el.innerHTML = "<span></span><b></b><small></small>";
+    el.children[0].textContent = label; el.children[1].textContent = value; el.children[2].textContent = sub;
+    if (tone && closed.length) el.children[1].classList.add(tone);
+    return el;
+  }));
+  const recent = $("recent");
+  recent.replaceChildren();
+  const last = closed.slice(-12).reverse();
+  if (!last.length) { recent.innerHTML = '<div class="none">No results yet. Join a game and tap a square.</div>'; }
+  for (const p of last) {
+    const up = p.side === "yes";
+    const row = document.createElement("div"); row.className = "row";
+    row.innerHTML = '<div class="main"><div class="title"></div><div class="sub"></div></div><div class="num"></div>';
+    row.querySelector(".title").textContent = `${p.label} ${up ? "↑" : "↓"} to ${cents(up ? p.lo : p.hi)}`;
+    row.querySelector(".sub").textContent = `${{ won: "Hit", expired: "Timed out", closed: "Closed" }[p.status]} · ${fmtAmt(p.cost)} in at ${cents(p.entry)}, out at ${cents(p.exit)}`;
+    const n = row.querySelector(".num"); n.textContent = fmtSigned(p.pnl ?? 0); n.classList.add((p.pnl ?? 0) >= 0 ? "pos" : "neg");
+    recent.append(row);
+  }
+  $("resetBtn").hidden = !backend.reset;
 }
 
 async function loadGames(first) {
   try {
     const d = await backend.games();
     state.games = d.games;
-    if (first && !d.games.length) {
-      $("empty").textContent = d.error ? "Couldn't reach Gemini: " + d.error : "Loading live games from Gemini…";
-      setTimeout(() => loadGames(true), 2500);
-      return;
-    }
-    if (!state.game && d.games.length) selectGame(d.games[0]);
-  } catch {
-    if (first) { $("empty").textContent = "Couldn't load games. Retrying…"; setTimeout(() => loadGames(true), 3000); }
+    state.gamesError = d.error ?? null;
+    state.gamesLoaded = !d.loading;
+    if (state.game) state.game = state.games.find((g) => g.id === state.game.id) ?? state.game;
+    if (state.view === "lobby") renderLobby();
+    if (first && !d.games.length) setTimeout(() => loadGames(true), 3000);
+  } catch (err) {
+    state.gamesError = err instanceof Error ? err.message : String(err); state.gamesLoaded = true;
+    if (state.view === "lobby") renderLobby();
+    if (first) setTimeout(() => loadGames(true), 3000);
   }
 }
 
 async function init() {
-  seg($("stakes"), STAKES, (v) => "$" + v, () => state.stake, (v) => { state.stake = v; });
+  renderWins();
+  const custom = $("customWin");
+  custom.addEventListener("change", () => {
+    const v = Number(custom.value);
+    if (!(v >= 0.5 && v <= 500)) { custom.value = ""; toast("Custom amount must be $0.50 to $500", "err"); renderWins(); return; }
+    setWin(Math.round(v * 100) / 100);
+  });
+  custom.addEventListener("keydown", (e) => { if (e.key === "Enter") custom.blur(); });
   seg($("cols"), COLS, (v) => COL_LABEL[v], () => state.colSec, (v) => { state.colSec = v; });
   const soundBtn = $("soundBtn");
   soundBtn.setAttribute("aria-pressed", String(state.sound));
@@ -1088,7 +1210,16 @@ async function init() {
   $("zoomOut").onclick = () => { setZoom(state.zoom / 1.3); sfx.tap(1.02); };
   $("zoomIn").onclick = () => { setZoom(state.zoom * 1.3); sfx.tap(1.02); };
   setZoom(state.zoom);
-  $("gameBtn").onclick = () => { renderGameList(); $("gameDlg").showModal(); };
+  $("gameBtn").onclick = () => setView("lobby");
+  for (const b of document.querySelectorAll("#views button")) b.onclick = () => setView(b.dataset.view);
+  $("joinBtn").onclick = join;
+  $("resetBtn").onclick = async () => {
+    if (!backend.reset || !confirm("Reset your paper balance and clear your history?")) return;
+    const acct = await backend.reset();
+    state.balance = state.balanceShown = acct.balance; state.positions = [];
+    $("balance").textContent = fmtMoney(acct.balance); setStreak(0); renderPositions(); renderSummary();
+  };
+  setView("lobby");
   $("posBtn").onclick = () => { $("posDlg").showModal(); renderPositions(); };
   for (const d of document.querySelectorAll("dialog")) {
     d.addEventListener("click", (e) => { if (e.target === d || e.target.closest("[data-close]")) d.close(); });
