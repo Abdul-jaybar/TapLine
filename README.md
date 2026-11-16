@@ -24,10 +24,11 @@ Gemini contracts settle at the end of the game, not in 30 seconds, so a box is a
 | A box below the line | Buy NO now, rest a sell where YES falls to the box's near edge. Hit when the YES ask falls to it |
 | The deadline passes | Cancel the resting sell, exit at the market |
 
-The amount you pick ($1, $5, $10, $25 or a custom amount) can mean one of two things, switched with the Win / Size toggle:
+The amount you pick ($1, $5, $10, $25 or a custom amount) can mean one of two things, switched with the Win / Size / 1.0x toggle:
 
 - **Win** (default): the amount is what a hit pays. The move from entry to a square is only a few cents per contract, so the order is sized to pay it: contracts = amount / (target price - entry price). Each empty square shows what that position costs. A square one cent away needs a large position; a far square needs a small one.
 - **Size**: the amount is what you put in: contracts = amount / entry price. Each empty square shows what it would win.
+- **1.0x** (multiplier): sized like Size, but each empty square shows what a hit multiplies your amount by (for example 1.04x). This is the original format.
 
 **Max per square** (default $250) is your own cap on what one square may cost. A square that would cost more is dimmed and can't be tapped, so a small win never ties up a large amount by accident. A miss exits at the market price, so the loss depends on how far the price moved against you.
 

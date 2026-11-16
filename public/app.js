@@ -46,7 +46,7 @@ const state = {
   ticks: [], quote: null, shownMid: null, lastMid: null,
   positions: [], balance: 0, balanceShown: 0, limits: null,
   win: clamp(Number(store.get("tapline.win")) || 5, 0.5, 500), colSec: 10,
-  mode: store.get("tapline.mode") === "size" ? "size" : "win",
+  mode: ["win", "size", "multi"].includes(store.get("tapline.mode")) ? store.get("tapline.mode") : "win",
   maxCost: clamp(Number(store.get("tapline.max")) || 250, 10, 2500),
   sessionPnl: 0, joinedAt: 0,
   view: "lobby", pick: null, gamesError: null, gamesLoaded: false,
@@ -584,7 +584,7 @@ function draw(frame) {
         const [cr, cg, cb] = C.mult;
         ctx.fillStyle = `rgba(${cr + (255 - cr) * heat * 0.6},${cg + (255 - cg) * heat * 0.6},${cb},${clamp((afford ? 0.45 + 0.5 * heat + shimmer : 0.16) * fadeIn, 0, 1)})`;
         ctx.font = `${heat > 0.5 ? 700 : 600} ${clamp(Math.round(CELL_H * 0.46), 10, 19)}px ${FONT}`;
-        ctx.fillText(state.mode === "win" ? fmtAmt(Math.round(sz.cost)) : "+" + fmtAmt(Math.round(sz.win * 100) / 100), cx, cy);
+        ctx.fillText(state.mode === "win" ? fmtAmt(Math.round(sz.cost)) : state.mode === "multi" ? plan.multiple.toFixed(2) + "x" : "+" + fmtAmt(Math.round(sz.win * 100) / 100), cx, cy);
       }
     }
   }
@@ -942,7 +942,7 @@ canvas.addEventListener("pointerup", async (e) => {
   state.ghosts.set(key, { bornAt: performance.now(), win: Math.round(sz.win * 100) / 100, cost: sz.cost, multiple: box.plan.multiple });
   sfx.tap(box.plan.multiple); buzz(12); tapFx(box);
   try {
-    const { position } = await backend.tap({ symbol, lo: box.lo, hi: box.hi, deadline: box.deadline, amount: state.win, mode: state.mode, maxCost: state.maxCost });
+    const { position } = await backend.tap({ symbol, lo: box.lo, hi: box.hi, deadline: box.deadline, amount: state.win, mode: state.mode === "win" ? "win" : "size", maxCost: state.maxCost });
     upsertPosition({ ...position, colMs: span, bornAt: state.ghosts.get(key)?.bornAt, multiple: position.target / position.entry });
   } catch (err) {
     sfx.deny(); buzz(30);
@@ -1181,13 +1181,14 @@ function setWin(v) {
   renderWins();
 }
 function renderWins() {
-  seg($("modeSeg"), ["win", "size"], (v) => (v === "win" ? "Win" : "Size"), () => state.mode, (v) => {
+  seg($("modeSeg"), ["win", "size", "multi"], (v) => ({ win: "Win", size: "Size", multi: "1.0x" }[v]), () => state.mode, (v) => {
     state.mode = v; store.set("tapline.mode", v);
-    toast(v === "win" ? "Win mode: the amount is what a hit pays you." : "Size mode: the amount is what you put in.");
+    toast({ win: "Win mode: the amount is what a hit pays you.", size: "Size mode: the amount is what you put in.", multi: "Multiplier mode: the amount is what you put in, and squares show what a hit multiplies it by." }[v]);
     renderWins();
   });
   $("modeSeg").children[0].title = "The amount is what you win when a square hits";
   $("modeSeg").children[1].title = "The amount is what you put into each square";
+  $("modeSeg").children[2].title = "The original look: you put the amount in, squares show the multiplier";
   seg($("stakes"), WINS, (v) => "$" + v, () => state.win, setWin);
   const isCustom = !WINS.includes(state.win);
   $("customWin").closest(".custom").classList.toggle("on", isCustom);
