@@ -24,7 +24,12 @@ Gemini contracts settle at the end of the game, not in 30 seconds, so a box is a
 | A box below the line | Buy NO now, rest a sell where YES falls to the box's near edge. Hit when the YES ask falls to it |
 | The deadline passes | Cancel the resting sell, exit at the market |
 
-You choose how much a hit should pay ("win per hit": $1, $5, $10, $25 or a custom amount). The move from entry to a square is only a few cents per contract, so the order is sized to pay your amount: contracts = win / (target price - entry price). The number in each empty square is what that position costs. A square one cent away needs a large position; a far square needs a small one. A miss exits at the market price, so the loss depends on how far the price moved against you, not on the amount you chose to win.
+The amount you pick ($1, $5, $10, $25 or a custom amount) can mean one of two things, switched with the Win / Size toggle:
+
+- **Win** (default): the amount is what a hit pays. The move from entry to a square is only a few cents per contract, so the order is sized to pay it: contracts = amount / (target price - entry price). Each empty square shows what that position costs. A square one cent away needs a large position; a far square needs a small one.
+- **Size**: the amount is what you put in: contracts = amount / entry price. Each empty square shows what it would win.
+
+**Max per square** (default $250) is your own cap on what one square may cost. A square that would cost more is dimmed and can't be tapped, so a small win never ties up a large amount by accident. A miss exits at the market price, so the loss depends on how far the price moved against you.
 
 The chart draws the bid/ask band, not just the middle line, because hits are judged on the band's edges: when the spread is wide, the middle line can cross a box that nobody would actually buy from you at. A miss says how close it got ("Missed by 2¢").
 
@@ -50,9 +55,9 @@ npm test
 
 ## Screens
 
-- **Lobby**: the start screen. Pick a live game and press Join.
+- **Lobby**: the start screen. Pick a live game and press Join. Cards are tagged LIVE, CLOSING (priced but all but decided) or NO PRICE (can't be joined).
 - **Game**: the grid. "Change" in the header goes back to the lobby; open positions keep running.
-- **Summary**: balance, net profit, hit rate, won on hits, lost on misses, best streak and recent results, from your most recent 200 squares.
+- **Summary**: balance, net profit, hit rate, won on hits, lost on misses, best streak, badges and recent results, from your most recent 200 squares.
 - **Leaderboard**: a "coming soon" placeholder. Nothing is ranked yet.
 
 ## Status
@@ -73,7 +78,7 @@ Paper fills ignore order-book depth and fees, so real results will be somewhat w
 
 ## Safety limits
 
-Enforced for every tap (`DEFAULT_LIMITS` in `engine.ts`, mirrored in `public/local.js`): a tap can be sized to win $0.50 to $500, at most $5,000 can sit in open positions, a position can't cost more than the balance, and the price is always taken from the engine's own quote, never from what the page drew. The paper account starts at $10,000.
+Enforced for every tap (`DEFAULT_LIMITS` in `engine.ts`, mirrored in `public/local.js`): the amount is $0.50 to $500, one square can cost at most your max per square and never more than $2,500, at most $5,000 can sit in open positions, a position can't cost more than the balance, and the price is always taken from the engine's own quote, never from what the page drew. The paper account starts at $10,000.
 
 ## Look
 

@@ -46,6 +46,9 @@ const state = {
   ticks: [], quote: null, shownMid: null, lastMid: null,
   positions: [], balance: 0, balanceShown: 0, limits: null,
   win: clamp(Number(store.get("tapline.win")) || 5, 0.5, 500), colSec: 10,
+  mode: store.get("tapline.mode") === "size" ? "size" : "win",
+  maxCost: clamp(Number(store.get("tapline.max")) || 250, 10, 2500),
+  sessionPnl: 0, joinedAt: 0,
   view: "lobby", pick: null, gamesError: null, gamesLoaded: false,
   clockSkew: 0, center: null,
   thin: false, lite: false, slow: 0, lastFrame: 0, spreadHold: 0, spreadAt: 0, tickTimes: [], lastFlare: 0, lastBlip: 0,
@@ -188,10 +191,15 @@ function planBox(lo, hi) {
   if (!(entry > 0 && entry < 1 && target > entry && target < 1)) return null;
   return { side, entry, target, multiple: target / entry };
 }
-/** Contracts and cost needed for this square to pay state.win if it hits. */
+/**
+ * What a tap on this square would be, for the chosen amount and mode (mirrors planTap's sizing):
+ * "win" sizes the order so a hit pays the amount; "size" puts the amount in.
+ */
 function sizeFor(plan) {
-  const qty = Math.floor((state.win / (plan.target - plan.entry)) * 100) / 100;
-  return { qty, cost: qty * plan.entry };
+  const raw = state.mode === "win" ? state.win / (plan.target - plan.entry) : state.win / plan.entry;
+  const qty = Math.floor(raw * 100) / 100;
+  const cost = qty * plan.entry;
+  return { qty, cost, win: qty * (plan.target - plan.entry), ok: cost <= state.maxCost + 1e-9 && cost <= state.balance + 1e-9 && qty >= 0.01 };
 }
 const winOf = (p) => Math.round(p.quantity * (p.target - p.entry) * 100) / 100;
 
@@ -540,11 +548,18 @@ function draw(frame) {
         ctx.fillStyle = hl; rr(ctx, cx - CELL_W / 2 + inset + 2, cy - CELL_H / 2 + inset + 2, CELL_W - inset * 2 - 4, CELL_H * 0.42, Math.max(rad - 2, 1)); ctx.fill();
         if (pressed) { ctx.strokeStyle = `rgba(${ACCENT},0.8)`; ctx.lineWidth = 1.5; rr(ctx, cx - CELL_W / 2 + 1.5, cy - CELL_H / 2 + 1.5, CELL_W - 3, CELL_H - 3, rad + 4); ctx.stroke(); }
         ctx.restore();
-        const { cost } = sizeFor(plan);
-        const gain = "Win " + fmtAmt(state.win), costTxt = "costs " + fmtAmt(cost);
+        const sz = sizeFor(plan);
+        const over = sz.cost > state.maxCost + 1e-9;
+        const gain = sz.ok ? "Win " + fmtAmt(Math.round(sz.win * 100) / 100) : over ? "Over max" : "Too much";
+        const costTxt = (state.mode === "win" ? "costs " : "puts in ") + fmtAmt(Math.round(sz.cost * 100) / 100);
+        const cost = sz.cost;
         if (CELL_H >= 40) {
-          const fs = clamp(Math.round(CELL_H * 0.26), 14, 24);
-          ctx.fillStyle = C.win; ctx.font = `700 ${fs}px ${FONT}`;
+          let fs = clamp(Math.round(CELL_H * 0.26), 14, 24);
+          ctx.font = `700 ${fs}px ${FONT}`;
+          // Shrink the label so it stays inside a narrow square.
+          const room = CELL_W - 18, need = ctx.measureText(gain).width;
+          if (need > room) fs = Math.max(10, Math.floor(fs * room / need));
+          ctx.fillStyle = sz.ok ? C.win : "#ffd166"; ctx.font = `700 ${fs}px ${FONT}`;
           ctx.fillText(gain, cx, cy - fs * 0.42);
           ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.font = `600 ${Math.max(12, Math.round(fs * 0.66))}px ${FONT}`;
           ctx.fillText(costTxt, cx, cy + fs * 0.6);
@@ -555,21 +570,21 @@ function draw(frame) {
           const tag = `${gain} · ${costTxt}`;
           ctx.font = `700 14px ${FONT}`;
           const tw = ctx.measureText(tag).width + 18, ty = Math.max(14, cy - CELL_H / 2 - 16);
-          ctx.fillStyle = "rgba(6,10,12,0.92)"; ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 1;
+          ctx.fillStyle = "rgba(18,12,9,0.94)"; ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 1;
           rr(ctx, cx - tw / 2, ty - 12, tw, 24, 12); ctx.fill(); ctx.stroke();
-          ctx.fillStyle = C.win; ctx.fillText(tag, cx, ty + 0.5);
+          ctx.fillStyle = sz.ok ? C.win : "#ffd166"; ctx.fillText(tag, cx, ty + 0.5);
         }
       } else {
         // Bigger payouts read brighter; squares near the price shimmer.
-        const { cost } = sizeFor(plan);
-        const afford = cost <= state.balance + 1e-9;
+        const sz = sizeFor(plan);
+        const afford = sz.ok;
         const heat = afford ? clamp((plan.multiple - 1) / 0.4, 0, 1) : 0;
         const near = clamp(1 - Math.abs((r + 0.5) / 100 - mid) / 0.06, 0, 1);
         const shimmer = reduceMotion ? 0 : near * 0.25 * (0.5 + 0.5 * Math.sin(frame / 260 + c * 0.9));
         const [cr, cg, cb] = C.mult;
         ctx.fillStyle = `rgba(${cr + (255 - cr) * heat * 0.6},${cg + (255 - cg) * heat * 0.6},${cb},${clamp((afford ? 0.45 + 0.5 * heat + shimmer : 0.16) * fadeIn, 0, 1)})`;
         ctx.font = `${heat > 0.5 ? 700 : 600} ${clamp(Math.round(CELL_H * 0.46), 10, 19)}px ${FONT}`;
-        ctx.fillText(fmtAmt(cost), cx, cy);
+        ctx.fillText(state.mode === "win" ? fmtAmt(Math.round(sz.cost)) : "+" + fmtAmt(Math.round(sz.win * 100) / 100), cx, cy);
       }
     }
   }
@@ -578,7 +593,7 @@ function draw(frame) {
     const msg = "Thin market: waiting for a two-sided price";
     ctx.font = `600 14px ${FONT}`; ctx.textAlign = "center";
     const mw = ctx.measureText(msg).width + 36, mx = nowX + (W - nowX) / 2, my = Math.max(40, H * 0.2);
-    ctx.fillStyle = "rgba(6,18,22,0.85)"; ctx.strokeStyle = "rgba(255,209,102,0.6)"; ctx.lineWidth = 1;
+    ctx.fillStyle = "rgba(18,12,9,0.9)"; ctx.strokeStyle = "rgba(255,209,102,0.6)"; ctx.lineWidth = 1;
     rr(ctx, mx - mw / 2, my - 18, mw, 36, 18); ctx.fill(); ctx.stroke();
     ctx.fillStyle = "#ffd166"; ctx.fillText(msg, mx, my + 1);
   }
@@ -721,7 +736,7 @@ function draw(frame) {
     const bw = Math.max(w1, w2, 96) + 24, bh = state.sizes ? 58 : 46, bx = nowX + 20, by = headY - bh / 2;
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 16; ctx.shadowOffsetY = 8;
-    ctx.fillStyle = "rgba(6,18,22,0.82)"; rr(ctx, bx, by, bw, bh, 13); ctx.fill();
+    ctx.fillStyle = "rgba(18,12,9,0.88)"; rr(ctx, bx, by, bw, bh, 13); ctx.fill();
     ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     ctx.strokeStyle = "rgba(255,255,255,0.2)"; ctx.lineWidth = 1; ctx.stroke();
     ctx.restore();
@@ -918,10 +933,16 @@ canvas.addEventListener("pointerup", async (e) => {
   const key = box.col + ":" + box.row;
   if (state.ghosts.has(key)) return;
   const span = colMs(), symbol = state.contract.symbol;
-  state.ghosts.set(key, { bornAt: performance.now(), win: state.win, cost: sizeFor(box.plan).cost, multiple: box.plan.multiple });
+  const sz = sizeFor(box.plan);
+  if (!sz.ok) {
+    sfx.deny(); buzz(20);
+    toast(sz.cost > state.maxCost + 1e-9 ? `That square needs ${fmtAmt(Math.ceil(sz.cost))}. Your max per square is ${fmtAmt(state.maxCost)}.` : `That square needs ${fmtAmt(Math.ceil(sz.cost))}, more than your balance.`, "err");
+    return;
+  }
+  state.ghosts.set(key, { bornAt: performance.now(), win: Math.round(sz.win * 100) / 100, cost: sz.cost, multiple: box.plan.multiple });
   sfx.tap(box.plan.multiple); buzz(12); tapFx(box);
   try {
-    const { position } = await backend.tap({ symbol, lo: box.lo, hi: box.hi, deadline: box.deadline, win: state.win });
+    const { position } = await backend.tap({ symbol, lo: box.lo, hi: box.hi, deadline: box.deadline, amount: state.win, mode: state.mode, maxCost: state.maxCost });
     upsertPosition({ ...position, colMs: span, bornAt: state.ghosts.get(key)?.bornAt, multiple: position.target / position.entry });
   } catch (err) {
     sfx.deny(); buzz(30);
@@ -991,6 +1012,7 @@ function flushResults() {
     const total = sum(wins);
     const milestone = [5, 10, 20].some((m) => state.streak < m && state.streak + wins.length >= m);
     setStreak(state.streak + wins.length);
+    checkBadges(wins);
     const big = total >= 5 || milestone;
     const lead = wins[0];
     for (const p of wins.slice(1)) quietHit(p);
@@ -1011,6 +1033,11 @@ function flushResults() {
     toast(`${why} · ${fmtSigned(total)}`, total >= 0 ? "win" : "loss");
   }
   showDelta(sum(batch));
+  state.sessionPnl += sum(batch);
+  const chip = $("session");
+  chip.textContent = fmtSigned(state.sessionPnl) + " this session";
+  chip.className = "session " + (state.sessionPnl >= 0 ? "pos" : "neg");
+  chip.hidden = false;
 }
 
 // ---------- live activity from the whole game ----------
@@ -1055,7 +1082,12 @@ function openStream() {
       const last = d.ticks.at(-1);
       if (last) { state.quote = { bid: last.bid, ask: last.ask }; state.lastMid = (last.bid + last.ask) / 2; }
       $("empty").hidden = !!last;
-      if (!last) $("empty").textContent = "Waiting for a live price on this contract…";
+      if (!last) {
+        $("empty").textContent = "Waiting for a live price on this contract…";
+        setTimeout(() => {
+          if (mine() && !$("empty").hidden) $("empty").textContent = "No two-sided price here right now. Try another market above, or change game.";
+        }, 7000);
+      }
       else maybeCoach();
     },
     quote(d) {
@@ -1149,10 +1181,49 @@ function setWin(v) {
   renderWins();
 }
 function renderWins() {
+  seg($("modeSeg"), ["win", "size"], (v) => (v === "win" ? "Win" : "Size"), () => state.mode, (v) => {
+    state.mode = v; store.set("tapline.mode", v);
+    toast(v === "win" ? "Win mode: the amount is what a hit pays you." : "Size mode: the amount is what you put in.");
+    renderWins();
+  });
+  $("modeSeg").children[0].title = "The amount is what you win when a square hits";
+  $("modeSeg").children[1].title = "The amount is what you put into each square";
   seg($("stakes"), WINS, (v) => "$" + v, () => state.win, setWin);
   const isCustom = !WINS.includes(state.win);
   $("customWin").closest(".custom").classList.toggle("on", isCustom);
   if (isCustom) $("customWin").value = state.win; else if (document.activeElement !== $("customWin")) $("customWin").value = "";
+  $("maxVal").textContent = fmtAmt(state.maxCost);
+}
+const MAX_CHOICES = [50, 100, 250, 500, 1000, 2500];
+function renderMax() {
+  seg($("maxSeg"), MAX_CHOICES, (v) => "$" + v.toLocaleString(), () => state.maxCost, (v) => {
+    state.maxCost = v; store.set("tapline.max", String(v)); renderMax(); renderWins();
+  });
+}
+
+// ---------- badges: small milestones, kept in this browser ----------
+const BADGES = [
+  ["first", "First hit", "Land your first square"],
+  ["hat", "Hat-trick", "3 hits in a row"],
+  ["fire", "On fire", "5 hits in a row"],
+  ["big", "Big one", "Win $25 or more on one square"],
+  ["century", "Century", "Win $100 in total"],
+];
+const earned = new Set((store.get("tapline.badges") || "").split(",").filter(Boolean));
+function award(id) {
+  if (earned.has(id)) return;
+  earned.add(id); store.set("tapline.badges", [...earned].join(","));
+  const b = BADGES.find((x) => x[0] === id);
+  setTimeout(() => toast(`Badge unlocked: ${b[1]}`, "badge"), 900);
+}
+function checkBadges(wins) {
+  if (!wins.length) return;
+  award("first");
+  if (state.streak >= 3) award("hat");
+  if (state.streak >= 5) award("fire");
+  if (wins.some((p) => p.pnl >= 25)) award("big");
+  const total = state.positions.filter((p) => p.status === "won").reduce((s, p) => s + (p.pnl ?? 0), 0);
+  if (total >= 100) award("century");
 }
 
 // ---------- sections ----------
@@ -1170,6 +1241,10 @@ function setView(v) {
 }
 
 const inPlay = (g) => g.markets[0]?.contracts.some((c) => drawable(c) && (c.bid + c.ask) / 2 > 0.12 && (c.bid + c.ask) / 2 < 0.88) ?? false;
+/** Can this game be traded at all right now: does any of its first few markets have a two-sided price? */
+const hasPrice = (g) => g.markets.slice(0, 3).some((m) => m.contracts.some(drawable));
+/** LIVE: in play. CLOSING: priced but all but decided. NO PRICE: nothing two-sided to trade. */
+const gameState = (g) => (inPlay(g) ? "live" : hasPrice(g) ? "closing" : "none");
 
 function renderLobby() {
   const wrap = $("lobbyGames");
@@ -1179,15 +1254,18 @@ function renderLobby() {
     note.textContent = !state.gamesLoaded ? "Loading live games from Gemini…" : state.gamesError ? "Couldn't reach Gemini: " + state.gamesError : "No games are live right now. Check back at game time.";
     wrap.append(note);
   }
-  if (!state.games.some((g) => g.id === state.pick)) state.pick = state.games.find(inPlay)?.id ?? state.games[0]?.id ?? null;
-  for (const g of state.games) {
-    const live = inPlay(g);
+  const order = { live: 0, closing: 1, none: 2 };
+  const games = [...state.games].sort((x, y) => order[gameState(x)] - order[gameState(y)]);
+  if (!games.some((g) => g.id === state.pick)) state.pick = games.find((g) => gameState(g) !== "none")?.id ?? null;
+  for (const g of games) {
+    const st = gameState(g);
     const card = document.createElement("button");
     card.className = "card glass"; card.setAttribute("role", "option"); card.setAttribute("aria-selected", String(g.id === state.pick));
     card.innerHTML = '<div class="card-top"><span class="league"></span><span class="livetag"><i></i><span></span></span></div><div class="card-title"></div><div class="teams"></div><div class="card-foot"><span></span><span></span></div>';
     card.querySelector(".league").textContent = g.league;
-    card.querySelector(".livetag").classList.toggle("quiet", !live);
-    card.querySelector(".livetag span").textContent = live ? "LIVE" : "QUIET";
+    card.querySelector(".livetag").classList.toggle("quiet", st !== "live");
+    card.querySelector(".livetag span").textContent = { live: "LIVE", closing: "CLOSING", none: "NO PRICE" }[st];
+    card.classList.toggle("off", st === "none");
     card.querySelector(".card-title").textContent = g.title;
     const teams = card.querySelector(".teams");
     for (const c of g.markets[0].contracts.slice(0, 2)) {
@@ -1208,15 +1286,23 @@ function renderLobby() {
     wrap.append(card);
   }
   const picked = state.games.find((g) => g.id === state.pick);
+  const tradable = picked && gameState(picked) !== "none";
   $("joinTitle").textContent = picked ? picked.title : "Choose a game";
-  $("joinBtn").disabled = !picked;
+  $("joinLabel").textContent = !picked ? "Nothing selected" : tradable ? "Selected" : "No live price right now";
+  $("joinBtn").disabled = !tradable;
 }
 
 function join() {
   const g = state.games.find((x) => x.id === state.pick);
-  if (!g) return;
+  if (!g || gameState(g) === "none") return;
+  // A short "entering" card so joining feels like stepping into the game.
+  const enter = $("enter");
+  $("enterTitle").textContent = g.title;
+  enter.hidden = false; enter.classList.remove("go"); void enter.offsetWidth; enter.classList.add("go");
+  setTimeout(() => { enter.hidden = true; }, reduceMotion ? 0 : 900);
   if (state.game?.id !== g.id) selectGame(g);
-  setView("game");
+  state.joinedAt = performance.now();
+  setTimeout(() => setView("game"), reduceMotion ? 0 : 320);
 }
 
 function renderSummary() {
@@ -1256,6 +1342,11 @@ function renderSummary() {
     const n = row.querySelector(".num"); n.textContent = fmtSigned(p.pnl ?? 0); n.classList.add((p.pnl ?? 0) >= 0 ? "pos" : "neg");
     recent.append(row);
   }
+  $("badges").replaceChildren(...BADGES.map(([id, name, how]) => {
+    const el = document.createElement("div"); el.className = "badge" + (earned.has(id) ? " on" : "");
+    el.innerHTML = "<b></b><span></span>"; el.children[0].textContent = name; el.children[1].textContent = how;
+    return el;
+  }));
   $("resetBtn").hidden = !backend.reset;
 }
 
@@ -1297,6 +1388,7 @@ async function init() {
   $("gameBtn").onclick = () => setView("lobby");
   for (const b of document.querySelectorAll("#views button")) b.onclick = () => setView(b.dataset.view);
   $("joinBtn").onclick = join;
+  $("maxBtn").onclick = () => { renderMax(); $("maxDlg").showModal(); };
   $("resetBtn").onclick = async () => {
     if (!backend.reset || !confirm("Reset your paper balance and clear your history?")) return;
     const acct = await backend.reset();

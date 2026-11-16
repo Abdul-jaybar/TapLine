@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Account, PaperBroker, planTap, TapError } from "../src/server/engine.ts";
+import { Account, PaperBroker, planTap, TapError, type TapRequest } from "../src/server/engine.ts";
 import type { Quote } from "../src/server/gemini.ts";
 
 const SYM = "GEMI-TEST-M-HOME";
@@ -21,9 +21,9 @@ function setup(bid = 0.6, ask = 0.61, balance = 10_000) {
     q.t = t;
     acct.onQuote(q, t);
   };
-  // `win` is the profit wanted on a hit; the engine sizes the order to pay it.
-  const tap = (lo: number, hi: number, win = 10, deadline = T0 + 60_000) =>
-    acct.tap({ symbol: SYM, label: "Home", lo, hi, deadline, win }, T0);
+  // Default mode "win": the amount is the profit wanted on a hit, and the engine sizes the order to pay it.
+  const tap = (lo: number, hi: number, amount = 10, deadline = T0 + 60_000, extra: Partial<TapRequest> = {}) =>
+    acct.tap({ symbol: SYM, label: "Home", lo, hi, deadline, amount, mode: "win", ...extra }, T0);
   const onQuote = acct.onQuote.bind(acct);
   acct.onQuote = (qq: Quote, t = Date.now()) => { origOnQuote(qq, t); onQuote(q, t); };
   return { acct, move, tap };
@@ -109,12 +109,12 @@ test("refusals", async () => {
   const { acct, tap } = setup(0.6, 0.61, 20);
   await assert.rejects(tap(0.6, 0.61), /on the line/); // spread box
   await assert.rejects(tap(0.61, 0.62), /on the line/); // touching the ask: no profit after the spread
-  await assert.rejects(tap(0.65, 0.66, 0.1), /win amount must be/);
-  await assert.rejects(tap(0.65, 0.66, 1000), /win amount must be/);
+  await assert.rejects(tap(0.65, 0.66, 0.1), /amount must be/);
+  await assert.rejects(tap(0.65, 0.66, 1000), /amount must be/);
   await assert.rejects(tap(0.65, 0.66, 10, T0 + 1000), /closing/);
-  await assert.rejects(tap(0.65, 0.66, 10), /needs \$153 to win \$10; not enough balance/);
+  await assert.rejects(tap(0.65, 0.66, 10), /needs \$153; not enough balance/);
   await assert.rejects(tap(0.995, 1.0), /outside/);
-  await assert.rejects(acct.tap({ symbol: "NOPE", label: "", lo: 0.65, hi: 0.66, deadline: T0 + 60_000, win: 5 }, T0), TapError);
+  await assert.rejects(acct.tap({ symbol: "NOPE", label: "", lo: 0.65, hi: 0.66, deadline: T0 + 60_000, amount: 5, mode: "win" }, T0), TapError);
   assert.equal(acct.balance, 20);
   assert.equal(acct.positions.length, 0);
 });
@@ -124,6 +124,31 @@ test("two simultaneous taps cannot overspend the balance", async () => {
   const results = await Promise.allSettled([tap(0.65, 0.66, 10), tap(0.66, 0.67, 10)]);
   assert.deepEqual(results.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
   assert.ok(acct.balance >= 0);
+});
+
+test("size mode: the amount is what goes in, and the win is whatever the move pays", async () => {
+  const { acct, move, tap } = setup();
+  const p = await tap(0.65, 0.66, 10, T0 + 60_000, { mode: "size" });
+  assert.equal(p.quantity, 16.39); // floor(10 / 0.61 * 100) / 100
+  assert.equal(p.cost, 9.9979);
+  move(0.65, 0.66);
+  await acct.idle();
+  assert.equal(p.status, "won");
+  assert.equal(p.pnl, 0.6556); // 16.39 * 4 cents
+});
+
+test("max per square: a tap that would cost more than the user's cap is refused, nothing is spent", async () => {
+  const { acct, tap } = setup();
+  // winning $10 on a square 1 cent of move away needs $610
+  await assert.rejects(tap(0.62, 0.63, 10, T0 + 60_000, { maxCost: 250 }), /needs \$610, over the \$250 max per square/);
+  assert.equal(acct.balance, 10_000);
+  const ok = await tap(0.71, 0.72, 10, T0 + 60_000, { maxCost: 250 }); // 10 cents of move: $61
+  assert.equal(ok.cost, 61);
+});
+
+test("the engine's own ceiling applies even with no user cap", async () => {
+  const { tap } = setup(0.6, 0.61, 100_000);
+  await assert.rejects(tap(0.62, 0.63, 100), /over the \$2500 max per square/); // would need $6,100
 });
 
 test("exposure cap", async () => {

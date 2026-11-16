@@ -93,11 +93,11 @@ app.get("/api/account", (c) => {
 });
 
 app.post("/api/tap", async (c) => {
-  const b = await c.req.json<{ sid?: string; symbol?: string; lo?: number; hi?: number; deadline?: number; win?: number }>();
+  const b = await c.req.json<{ sid?: string; symbol?: string; lo?: number; hi?: number; deadline?: number; amount?: number; mode?: string; maxCost?: number }>();
   if (!SESSION_ID.test(b.sid ?? "")) return c.json({ error: "bad session" }, 400);
   const contract = SYMBOL.test(b.symbol ?? "") ? knownContract(b.symbol!) : undefined;
   if (!contract) return c.json({ error: "unknown contract" }, 400);
-  if (![b.lo, b.hi, b.deadline, b.win].every((n) => typeof n === "number" && Number.isFinite(n))) {
+  if (![b.lo, b.hi, b.deadline, b.amount].every((n) => typeof n === "number" && Number.isFinite(n))) {
     return c.json({ error: "bad request" }, 400);
   }
   try {
@@ -107,7 +107,9 @@ app.post("/api/tap", async (c) => {
       lo: b.lo!,
       hi: b.hi!,
       deadline: b.deadline!,
-      win: b.win!,
+      amount: b.amount!,
+      mode: b.mode === "size" ? "size" : "win",
+      maxCost: typeof b.maxCost === "number" && Number.isFinite(b.maxCost) ? b.maxCost : undefined,
     });
     return c.json({ position });
   } catch (err) {

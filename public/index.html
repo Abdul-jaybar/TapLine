@@ -21,6 +21,7 @@
     <button data-view="leaderboard">Leaderboard <em>Soon</em></button>
   </nav>
   <div class="spacer"></div>
+  <span class="session" id="session" hidden></span>
   <div class="wallet glass" id="wallet"><span class="mode" id="mode">PAPER</span><span id="balance">$0.00</span><span class="delta" id="delta"></span></div>
 </header>
 
@@ -34,17 +35,18 @@
   <div class="streak" id="streak" aria-live="polite"></div>
   <div class="activity" id="activity" aria-label="Live moves in this game"></div>
   <div class="coach" id="coach" hidden>
-    <b>Tap any square.</b> It pays your chosen amount if the price reaches it before its column passes the line.
-    <span>Above the line, the bottom of the band has to reach the square. Below, the top does.</span>
+    <b>Tap any square.</b> It hits if the price reaches it before its column passes the line.
+    <span>Win mode: your amount is what a hit pays, and each square shows what it costs. Size mode: your amount is what you put in.</span>
   </div>
 </main>
 <canvas id="fx" aria-hidden="true"></canvas>
 
 <footer class="controls">
-  <div class="group" role="group" aria-label="Amount to win per hit">
-    <span class="lbl">Win per hit</span>
+  <div class="group" role="group" aria-label="Amount per tap">
+    <div id="modeSeg" class="seg glass" role="group" aria-label="What the amount means"></div>
     <div id="stakes" class="seg glass"></div>
-    <label class="custom glass"><span>$</span><input id="customWin" type="number" inputmode="decimal" min="0.5" max="500" step="0.5" placeholder="Custom" aria-label="Custom amount to win per hit"></label>
+    <label class="custom glass"><span>$</span><input id="customWin" type="number" inputmode="decimal" min="0.5" max="500" step="0.5" placeholder="Custom" aria-label="Custom amount"></label>
+    <button id="maxBtn" class="max-btn glass" aria-haspopup="dialog" aria-label="Change the most one square may cost">Max <b id="maxVal">$250</b></button>
   </div>
   <div class="group" role="group" aria-label="Time per column">
     <span class="lbl">Column</span>
@@ -61,12 +63,12 @@
 <!-- Start screen: choose a live game, then join. -->
 <section class="view" id="lobby" aria-label="Lobby">
   <div class="view-inner">
-    <h1>Pick a live game</h1>
-    <p class="lede">These games are trading on Gemini right now. Choose one and join to start tapping.</p>
+    <h1>Live games trading on Gemini</h1>
+    <p class="lede">Pick a game and press Join.</p>
     <div id="lobbyGames" class="cards" role="listbox" aria-label="Live games"></div>
   </div>
   <div class="joinbar glass">
-    <div class="join-info"><span class="join-label">Selected</span><b id="joinTitle">Choose a game</b></div>
+    <div class="join-info"><span class="join-label" id="joinLabel">Selected</span><b id="joinTitle">Choose a game</b></div>
     <button id="joinBtn" class="cta" disabled>Join</button>
   </div>
 </section>
@@ -76,6 +78,8 @@
     <h1>Your summary</h1>
     <p class="lede" id="summaryNote">Paper account. Covers your most recent 200 squares.</p>
     <div id="stats" class="stats"></div>
+    <h2>Badges</h2>
+    <div id="badges" class="badges"></div>
     <h2>Recent results</h2>
     <div id="recent" class="results glass"></div>
     <button id="resetBtn" class="ghost-btn" hidden>Reset paper account</button>
@@ -96,6 +100,17 @@
     </div>
   </div>
 </section>
+
+<dialog id="maxDlg" class="sheet">
+  <div class="sheet-head"><h2>Max per square</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <p>The most one square may cost you. A square that would need more than this can't be tapped, so a small win never ties up a large amount by accident.</p>
+    <div id="maxSeg" class="seg glass wrap"></div>
+    <p class="fine">In Win mode, squares close to the line need a big position to pay your amount. Zoom out for further squares, which cost less.</p>
+  </div>
+</dialog>
+
+<div id="enter" class="enter" hidden aria-hidden="true"><div><span>Entering</span><b id="enterTitle"></b></div></div>
 
 <dialog id="posDlg" class="sheet">
   <div class="sheet-head"><h2>Positions</h2><button class="x" data-close aria-label="Close">×</button></div>

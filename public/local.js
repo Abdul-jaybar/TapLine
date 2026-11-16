@@ -9,7 +9,7 @@ const WS = "wss://ws.gemini.com";
 const MAX_SPREAD = 0.1;
 const EXIT_GRACE_MS = 20_000;
 const START_BALANCE = 10_000;
-const LIMITS = { minWin: 0.5, maxWin: 500, maxExposure: 5000, minLeadMs: 3000, maxLeadMs: 60 * 60_000 };
+const LIMITS = { minAmount: 0.5, maxAmount: 500, maxCost: 2500, maxExposure: 5000, minLeadMs: 3000, maxLeadMs: 60 * 60_000 };
 const STORE_KEY = "tapline.paper.v2";
 
 const round = (n, dp) => Math.round(n * 10 ** dp) / 10 ** dp;
@@ -22,8 +22,9 @@ const sideQuote = (q, side) =>
 
 class TapError extends Error {}
 
-// `win` is the profit wanted if the square hits; the order is sized to pay exactly that.
-function planTap(q, lo, hi, win) {
+// mode "win": `amount` is the profit wanted on a hit, and the order is sized to pay it.
+// mode "size": `amount` is the money to put in.
+function planTap(q, lo, hi, amount, mode) {
   if (q.bid == null || q.ask == null) throw new TapError("the market is one-sided right now, try again in a moment");
   let side, target;
   if (lo >= q.ask + 0.01 - 1e-9) { side = "yes"; target = px(lo); }
@@ -31,7 +32,7 @@ function planTap(q, lo, hi, win) {
   else throw new TapError("that box is on the line, pick one further away");
   const entry = sideQuote(q, side).ask;
   if (!(entry > 0 && entry < 1) || !(target > entry && target < 1)) throw new TapError("no room to profit in that box");
-  const quantity = qtyFloor(win / (target - entry));
+  const quantity = qtyFloor(mode === "size" ? amount / entry : amount / (target - entry));
   if (quantity < 0.01) throw new TapError("amount too small for this square");
   return { side, entry, target, quantity, cost: money(quantity * entry) };
 }
@@ -222,15 +223,17 @@ export function createLocalBackend() {
       const now = Date.now();
       const contract = knownContract(req.symbol);
       if (!contract) throw new TapError("unknown contract");
-      if (!(req.win >= LIMITS.minWin && req.win <= LIMITS.maxWin)) throw new TapError(`win amount must be $${LIMITS.minWin} to $${LIMITS.maxWin}`);
+      if (!(req.amount >= LIMITS.minAmount && req.amount <= LIMITS.maxAmount)) throw new TapError(`amount must be $${LIMITS.minAmount} to $${LIMITS.maxAmount}`);
       if (!(req.lo >= 0.01 && req.hi <= 0.99 + 1e-9 && req.hi > req.lo)) throw new TapError("box is outside the tradable range");
       if (req.deadline < now + LIMITS.minLeadMs) throw new TapError("that column is closing, pick a later one");
       if (req.deadline > now + LIMITS.maxLeadMs) throw new TapError("that deadline is too far out");
       const q = feed.quotes.get(req.symbol);
       if (!q) throw new TapError("no live price for this contract yet");
       if (now - q.t > 5 * 60_000) throw new TapError("price is stale, market may be paused");
-      const plan = planTap(q, px(req.lo), px(req.hi), req.win);
-      if (plan.cost > acct.balance + 1e-9) throw new TapError(`that square needs $${Math.ceil(plan.cost)} to win $${req.win}; not enough balance`);
+      const plan = planTap(q, px(req.lo), px(req.hi), req.amount, req.mode === "size" ? "size" : "win");
+      const cap = Math.min(LIMITS.maxCost, req.maxCost > 0 ? req.maxCost : Infinity);
+      if (plan.cost > cap + 1e-9) throw new TapError(`that square needs $${Math.ceil(plan.cost)}, over the $${Math.floor(cap)} max per square`);
+      if (plan.cost > acct.balance + 1e-9) throw new TapError(`that square needs $${Math.ceil(plan.cost)}; not enough balance`);
       if (exposure() + plan.cost > LIMITS.maxExposure + 1e-9) throw new TapError(`open positions are capped at $${LIMITS.maxExposure}`);
       acct.balance = money(acct.balance - plan.cost);
       const p = {

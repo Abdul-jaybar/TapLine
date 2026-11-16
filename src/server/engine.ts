@@ -61,9 +61,14 @@ export interface TapRequest {
   lo: number;
   hi: number;
   deadline: number;
-  /** What the user wants to win if the square hits; the order is sized to pay exactly this. */
-  win: number;
+  /** What `amount` means: the profit wanted on a hit ("win"), or the money to put in ("size"). */
+  mode: AmountMode;
+  amount: number;
+  /** The user's own cap on what one square may cost. The tap is refused if it would cost more. */
+  maxCost?: number;
 }
+
+export type AmountMode = "win" | "size";
 
 export interface Fill {
   price: number;
@@ -117,9 +122,11 @@ export class PaperBroker implements Broker {
 export class TapError extends Error {}
 
 export interface Limits {
-  /** Smallest and largest amount a single tap may be sized to win. */
-  minWin: number;
-  maxWin: number;
+  /** Smallest and largest amount a tap may be set to (to win, or to put in). */
+  minAmount: number;
+  maxAmount: number;
+  /** Most a single square may cost, whatever the user's own cap says. */
+  maxCost: number;
   /** Most money allowed in open positions at once. */
   maxExposure: number;
   /** Earliest and latest allowed deadline, from now. */
@@ -131,8 +138,9 @@ export interface Limits {
 export const EXIT_GRACE_MS = 20_000;
 
 export const DEFAULT_LIMITS: Limits = {
-  minWin: 0.5,
-  maxWin: 500,
+  minAmount: 0.5,
+  maxAmount: 500,
+  maxCost: 2500,
   maxExposure: 5000,
   minLeadMs: 3_000,
   maxLeadMs: 60 * 60_000,
@@ -140,11 +148,14 @@ export const DEFAULT_LIMITS: Limits = {
 
 /** Plan a tap against a quote. Pure, so the UI's payout labels and the engine agree. */
 /**
- * `win` is the profit wanted if the square hits. The move from entry to target is small (cents),
- * so the order is sized up to pay that amount: quantity = win / (target - entry). Near squares
- * therefore need a large position, far squares a small one.
+ * Two ways to size a tap:
+ *   "win":  `amount` is the profit wanted if the square hits. The move from entry to target is only
+ *           cents, so the order is sized up to pay it: quantity = amount / (target - entry). A near
+ *           square therefore needs a large position, a far one a small position.
+ *   "size": `amount` is the money to put in: quantity = amount / entry. The win is whatever the
+ *           move pays on that size.
  */
-export function planTap(q: Pick<Quote, "bid" | "ask">, lo: number, hi: number, win: number) {
+export function planTap(q: Pick<Quote, "bid" | "ask">, lo: number, hi: number, amount: number, mode: AmountMode = "win") {
   if (q.bid === null || q.ask === null) throw new TapError("the market is one-sided right now, try again in a moment");
   let side: Side;
   let target: number;
@@ -159,7 +170,7 @@ export function planTap(q: Pick<Quote, "bid" | "ask">, lo: number, hi: number, w
   }
   const entry = sideQuote(q, side).ask!;
   if (!(entry > 0 && entry < 1) || !(target > entry && target < 1)) throw new TapError("no room to profit in that box");
-  const quantity = qtyFloor(win / (target - entry));
+  const quantity = qtyFloor(mode === "win" ? amount / (target - entry) : amount / entry);
   if (quantity < 0.01) throw new TapError("amount too small for this square");
   const cost = money(quantity * entry);
   return { side, entry, target, quantity, cost, multiple: target / entry, profitIfHit: money(quantity * (target - entry)) };
@@ -195,8 +206,9 @@ export class Account {
   tap(req: TapRequest, now = Date.now()): Promise<Position> {
     return this.run(async () => {
       const L = this.limits;
-      if (!(req.win >= L.minWin && req.win <= L.maxWin)) {
-        throw new TapError(`win amount must be $${L.minWin} to $${L.maxWin}`);
+      if (req.mode !== "win" && req.mode !== "size") throw new TapError("unknown amount mode");
+      if (!(req.amount >= L.minAmount && req.amount <= L.maxAmount)) {
+        throw new TapError(`amount must be $${L.minAmount} to $${L.maxAmount}`);
       }
       if (!(req.lo >= 0.01 && req.hi <= 0.99 + 1e-9 && req.hi > req.lo)) throw new TapError("box is outside the tradable range");
       if (req.deadline < now + L.minLeadMs) throw new TapError("that column is closing, pick a later one");
@@ -206,8 +218,11 @@ export class Account {
       if (now - q.t > 5 * 60_000) throw new TapError("price is stale, market may be paused");
 
       // Planned from the server's own quote, never from a price the client sent.
-      const plan = planTap(q, px(req.lo), px(req.hi), req.win);
-      if (plan.cost > this.balance + 1e-9) throw new TapError(`that square needs $${Math.ceil(plan.cost)} to win $${req.win}; not enough balance`);
+      const plan = planTap(q, px(req.lo), px(req.hi), req.amount, req.mode);
+      // The user's own cap first, then the engine's: a tap never commits more than either allows.
+      const cap = Math.min(L.maxCost, req.maxCost && req.maxCost > 0 ? req.maxCost : Infinity);
+      if (plan.cost > cap + 1e-9) throw new TapError(`that square needs $${Math.ceil(plan.cost)}, over the $${Math.floor(cap)} max per square`);
+      if (plan.cost > this.balance + 1e-9) throw new TapError(`that square needs $${Math.ceil(plan.cost)}; not enough balance`);
       if (this.exposure() + plan.cost > L.maxExposure + 1e-9) {
         throw new TapError(`open positions are capped at $${L.maxExposure}`);
       }
