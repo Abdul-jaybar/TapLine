@@ -1,3 +1,5 @@
+import { createChat } from "/chat.js";
+
 // TapLine client: a live odds line on a grid of tappable squares.
 // A square is a 1-cent price range and a deadline (its column's right edge).
 // Tap above the line to back the odds rising into that square; below, falling.
@@ -1020,6 +1022,7 @@ function flushResults() {
     sfx.win(state.streak, big); buzz(big ? [25, 40, 25, 40, 60] : [20, 40, 40]);
     state.marks.push({ symbol: lead.symbol, t: now(), price: lead.side === "yes" ? lead.lo : lead.hi, text: fmtSigned(total) });
     toast(wins.length > 1 ? `${wins.length} squares hit · won ${fmtMoney(total)}` : `You won ${fmtMoney(total)}`, "win");
+    if (chatShare) chat.send(`hit ${fmtSigned(total)} on ${lead.label ?? state.contract?.label ?? "a square"} ${cents(lead.side === "yes" ? lead.lo : lead.hi)}`, "hit");
   }
   if (rest.length) {
     const total = sum(rest);
@@ -1174,7 +1177,87 @@ function selectMarket(m) {
   state.market = m;
   selectContract(quoted[0] ?? m.contracts[0]);
 }
-function selectGame(g) { state.game = g; selectMarket(g.markets[0]); }
+function selectGame(g) { state.game = g; selectMarket(g.markets[0]); chat.join(g.id); }
+
+// ---------- live chat, one room per game ----------
+let chatOpen = false, chatUnread = 0, chatShare = store.get("tapline.chatShare") !== "off", lastSocial = 0;
+const chat = createChat({
+  store,
+  onMessage(m, { mine, fromHistory, reset } = {}) {
+    const list = $("chatList");
+    if (reset) { list.replaceChildren(chatEmpty()); chatUnread = 0; renderChatCount(); return; }
+    list.querySelector(".chat-empty")?.remove();
+    const el = document.createElement("div");
+    el.className = "msg" + (m.kind === "hit" ? " hit" : "") + (mine ? " mine" : "") + (fromHistory ? " old" : "");
+    const who = document.createElement("b"); who.textContent = mine ? "You" : m.name;
+    const body = document.createElement("span"); body.textContent = m.text;
+    el.append(who, body);
+    // History can arrive out of order: place by time.
+    const after = [...list.children].find((x) => Number(x.dataset.t) > m.t);
+    el.dataset.t = m.t;
+    const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    list.insertBefore(el, after ?? null);
+    while (list.children.length > 60) list.firstElementChild.remove();
+    if (stick || mine) list.scrollTop = list.scrollHeight;
+    if (mine || fromHistory) return;
+    if (!chatOpen) { chatUnread++; renderChatCount(); }
+    // Other people's hits are a small, rate-limited nudge while you play.
+    if (m.kind === "hit" && !chatOpen && state.view === "game" && performance.now() - lastSocial > 6000) {
+      lastSocial = performance.now();
+      toast(`${m.name} ${m.text}`, "social");
+    }
+  },
+  onPeople(people) {
+    const el = $("chatPeople");
+    el.querySelector("span").textContent = people.length ? `${people.length} here now` : el.classList.contains("live") ? "Just you so far" : "Connecting…";
+  },
+  onStatus(s) {
+    const el = $("chatPeople");
+    el.classList.toggle("live", s === "live");
+    if (s !== "live") el.querySelector("span").textContent = s === "offline" ? "Chat offline. Retrying…" : "Connecting…";
+  },
+});
+function chatEmpty() {
+  const d = document.createElement("div"); d.className = "chat-empty";
+  d.textContent = "No messages yet. Say hi to everyone watching this game.";
+  return d;
+}
+function renderChatCount() {
+  const n = $("chatCount");
+  n.hidden = !chatUnread; n.textContent = chatUnread > 9 ? "9+" : String(chatUnread);
+}
+function setChat(open) {
+  chatOpen = open;
+  $("chat").hidden = !open;
+  $("chatBtn").setAttribute("aria-expanded", String(open));
+  if (open) {
+    chatUnread = 0; renderChatCount();
+    const list = $("chatList"); list.scrollTop = list.scrollHeight;
+    if (matchMedia("(pointer: fine)").matches) $("chatInput").focus();
+  }
+}
+function initChat() {
+  $("chatList").replaceChildren(chatEmpty());
+  $("chatName").textContent = chat.name;
+  $("chatShare").checked = chatShare;
+  $("chatShare").onchange = (e) => { chatShare = e.target.checked; store.set("tapline.chatShare", chatShare ? "on" : "off"); };
+  $("chatBtn").onclick = () => setChat(!chatOpen);
+  $("chatClose").onclick = () => setChat(false);
+  $("chatName").onclick = () => {
+    const n = prompt("Your chat name (up to 16 letters or numbers)", chat.name);
+    if (n != null) $("chatName").textContent = chat.setName(n);
+  };
+  $("chatForm").onsubmit = (e) => {
+    e.preventDefault();
+    const input = $("chatInput");
+    const err = chat.send(input.value);
+    if (err) { toast(err, "err"); return; }
+    input.value = "";
+  };
+  // Keys typed in the chat box must not reach the chart's shortcuts.
+  $("chat").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") setChat(false); });
+  $("chat").addEventListener("pointerdown", (e) => e.stopPropagation());
+}
 
 function setWin(v) {
   state.win = v; store.set("tapline.win", String(v));
@@ -1389,6 +1472,7 @@ async function init() {
   $("gameBtn").onclick = () => setView("lobby");
   for (const b of document.querySelectorAll("#views button")) b.onclick = () => setView(b.dataset.view);
   $("joinBtn").onclick = join;
+  initChat();
   $("maxBtn").onclick = () => { renderMax(); $("maxDlg").showModal(); };
   $("resetBtn").onclick = async () => {
     if (!backend.reset || !confirm("Reset your paper balance and clear your history?")) return;

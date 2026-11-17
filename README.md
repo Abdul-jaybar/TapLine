@@ -60,6 +60,7 @@ npm test
 - **Game**: the grid. "Change" in the header goes back to the lobby; open positions keep running.
 - **Summary**: balance, net profit, hit rate, won on hits, lost on misses, best streak, badges and recent results, from your most recent 200 squares.
 - **Leaderboard**: a "coming soon" placeholder. Nothing is ranked yet.
+- **Chat**: a live chat room for each game, opened from the Chat button. It runs on Supabase Realtime broadcast (`public/chat.js`) with no database: messages go browser to browser, and someone already in the room sends recent messages to a newcomer. It shows how many people are in the room, can post your hits automatically ("Post my hits here"), and shows other people's hits as a small toast while the chat is closed. Names are random (e.g. QuickOtter55) and can be changed. Messages are plain text, at most 200 characters, one per 1.2 s. There is no moderation or sign-in yet, and only the publishable browser key is in the code.
 
 ## Status
 

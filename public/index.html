@@ -34,6 +34,19 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <div class="streak" id="streak" aria-live="polite"></div>
   <div class="activity" id="activity" aria-label="Live moves in this game"></div>
+  <aside class="chat" id="chat" hidden aria-label="Game chat">
+    <div class="chat-head">
+      <div class="chat-title"><b>Game chat</b><span id="chatPeople" class="chat-people"><i></i><span>Connecting…</span></span></div>
+      <button id="chatName" class="chat-name" title="Change your chat name"></button>
+      <button class="x" id="chatClose" aria-label="Close chat">×</button>
+    </div>
+    <div id="chatList" class="chat-list" role="log" aria-live="polite"></div>
+    <label class="chat-share"><input type="checkbox" id="chatShare"> Post my hits here</label>
+    <form id="chatForm" class="chat-form" autocomplete="off">
+      <input id="chatInput" maxlength="200" placeholder="Say something…" aria-label="Chat message" enterkeyhint="send">
+      <button class="cta" id="chatSend">Send</button>
+    </form>
+  </aside>
   <div class="coach" id="coach" hidden>
     <b>Tap any square.</b> It hits if the price reaches it before its column passes the line.
     <span>Win mode: your amount is what a hit pays, and each square shows what it costs. Size mode: your amount is what you put in. 1.0x mode is the same, with squares showing the multiplier.</span>
@@ -57,6 +70,7 @@
     <div class="seg glass zoom"><button id="zoomOut" aria-label="Zoom out to see more prices">−</button><span id="zoomPct">100%</span><button id="zoomIn" aria-label="Zoom in">+</button></div>
   </div>
   <button id="soundBtn" class="icon-btn glass" aria-label="Sound" aria-pressed="true">♪</button>
+  <button id="chatBtn" class="pos-btn chat-btn glass" aria-controls="chat" aria-expanded="false">Chat <span id="chatCount" hidden>0</span></button>
   <button id="posBtn" class="pos-btn glass">Positions <span id="posCount">0</span></button>
 </footer>
 
