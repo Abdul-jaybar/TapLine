@@ -32,7 +32,7 @@ The amount you pick ($1, $5, $10, $25 or a custom amount) can mean one of two th
 
 **Max per square** (default $250) is your own cap on what one square may cost. A square that would cost more is dimmed and can't be tapped, so a small win never ties up a large amount by accident. A miss exits at the market price, so the loss depends on how far the price moved against you.
 
-The chart draws the bid/ask band, not just the middle line, because hits are judged on the band's edges: when the spread is wide, the middle line can cross a box that nobody would actually buy from you at. A miss says how close it got ("Missed by 2¢").
+The line is the middle of bid and ask while you hold nothing. Once you hold squares, it glides onto the price that decides them: the bid (what you could sell at) for squares above, the ask for squares below, following your soonest-ending square. So the line touching a square is exactly a hit, and a wide spread can't make the line cross a square nobody would pay you for. The readout says which price the line is on, the bid/ask band stays drawn behind it, each open square shows how many cents it still needs, and a miss says how close it got ("Missed by 2¢").
 
 ## Run it
 

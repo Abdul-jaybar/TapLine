@@ -45,7 +45,7 @@ let CELL_W = 108, CELL_H = 96, NOW_AT = 0.3;
 
 const state = {
   games: [], game: null, market: null, contract: null,
-  ticks: [], quote: null, shownMid: null, lastMid: null,
+  ticks: [], quote: null, shownMid: null, lastMid: null, lineK: 0,
   positions: [], balance: 0, balanceShown: 0, limits: null,
   win: clamp(Number(store.get("tapline.win")) || 5, 0.5, 500), colSec: 10,
   mode: ["win", "size", "multi"].includes(store.get("tapline.mode")) ? store.get("tapline.mode") : "win",
@@ -388,13 +388,28 @@ function drawBand(pts, nowX, q, frame) {
   ctx.setLineDash([]);
 }
 
+/**
+ * The price the line draws. With nothing open it is the middle of bid and ask. While you hold
+ * squares it moves onto the price that decides them, so touching a square is exactly a hit:
+ * squares above are hit by the bid (state.lineK = 1), squares below by the ask (lineK = -1).
+ */
+const linePrice = (q) => (q.bid + q.ask) / 2 - state.lineK * (q.ask - q.bid) / 2;
+function lineTarget() {
+  let soonest = null;
+  for (const p of state.positions) {
+    if (p.status !== "open" || p.symbol !== state.contract?.symbol) continue;
+    if (!soonest || p.deadline < soonest.deadline) soonest = p;
+  }
+  return !soonest ? 0 : soonest.side === "yes" ? 1 : -1;
+}
+
 function drawLine(pts, nowX, headY, frame, busy) {
   if (!pts.length) return;
   // Mid line, with each 1-cent step eased into an S-curve so it flows.
   ctx.beginPath();
   let started = false, prevY = 0;
   for (let i = 0; i < pts.length; i++) {
-    const x = xOf(pts[i].t), y = yOf((pts[i].bid + pts[i].ask) / 2);
+    const x = xOf(pts[i].t), y = yOf(linePrice(pts[i]));
     const nextX = i + 1 < pts.length ? xOf(pts[i + 1].t) : nowX;
     if (nextX < -40) { prevY = y; continue; }
     if (!started) { ctx.moveTo(Math.max(x, -40), y); started = true; }
@@ -453,14 +468,15 @@ function draw(frame) {
   CELL_H = state.center === null || reduceMotion ? fitH : CELL_H + (fitH - CELL_H) * 0.06;
 
   const mid = (q.bid + q.ask) / 2;
-  if (state.center === null) { state.center = mid; state.shownMid = mid; }
+  state.lineK += (lineTarget() - state.lineK) * (reduceMotion ? 1 : 0.12);
+  if (state.center === null) { state.center = mid; state.shownMid = linePrice(q); }
   // Follow gently when the price drifts, quickly when it runs, so the line never leaves the screen.
   const rowsOff = Math.abs(mid - state.center) / 0.01;
   state.center += (mid - state.center) * (rowsOff > 2.5 ? 0.16 : rowsOff > 1.2 ? 0.07 : 0.03);
   // "Busy" = the price has changed several times in the last few seconds; decoration backs off then.
   while (state.tickTimes.length && frame - state.tickTimes[0] > 3000) state.tickTimes.shift();
   const busy = state.tickTimes.length >= 4;
-  state.shownMid += (mid - state.shownMid) * (reduceMotion ? 1 : 0.18);
+  state.shownMid += (linePrice(q) - state.shownMid) * (reduceMotion ? 1 : 0.18);
   state.headKick *= 0.9;
 
   const t = now(), nowX = W * NOW_AT;
@@ -735,7 +751,8 @@ function draw(frame) {
   // readout beside the head: who and what chance (as Gemini's charts label it), bid/ask, buyers vs sellers
   {
     const name = (state.contract?.label ?? "").slice(0, 16), pct = Math.round(mid * 100) + "%";
-    const quoteTxt = cents(q.bid) + " / " + cents(q.ask);
+    // Name the price the line is on while it follows one side.
+    const quoteTxt = state.lineK > 0.5 ? "Line on sell " + cents(q.bid) + " · buy " + cents(q.ask) : state.lineK < -0.5 ? "Line on buy " + cents(q.ask) + " · sell " + cents(q.bid) : "Sell " + cents(q.bid) + " · Buy " + cents(q.ask);
     ctx.textAlign = "left"; ctx.textBaseline = "middle";
     ctx.font = `700 17px ${FONT}`; const w1 = ctx.measureText(name + "  " + pct).width;
     ctx.font = `600 14px ${FONT}`; const w2 = ctx.measureText(quoteTxt).width;
