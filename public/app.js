@@ -45,7 +45,7 @@ let CELL_W = 108, CELL_H = 96, NOW_AT = 0.3;
 
 const state = {
   games: [], game: null, market: null, contract: null,
-  ticks: [], quote: null, shownMid: null, lastMid: null, lineK: 0,
+  ticks: [], quote: null, shownMid: null, lastMid: null,
   positions: [], balance: 0, balanceShown: 0, limits: null,
   win: clamp(Number(store.get("tapline.win")) || 5, 0.5, 500), colSec: 10,
   mode: ["win", "size", "multi"].includes(store.get("tapline.mode")) ? store.get("tapline.mode") : "win",
@@ -282,7 +282,7 @@ function rr(c, x, y, w, h, r) {
 
 /**
  * A glass tile centred on (cx, cy): cast shadow, tinted translucent body, lit top edge, bright outline.
- * o: { scale, alpha, tint, bright, line1, line2, tag (short line2 for small tiles), charge, fromTop, timeLeft, near }
+ * o: { scale, alpha, tint, bright, line1, line2, charge, fromTop, timeLeft, near }
  */
 function tile(cx, cy, w, h, o) {
   const alpha = o.alpha ?? 1;
@@ -323,8 +323,7 @@ function tile(cx, cy, w, h, o) {
   const top = -h / 2 + (room - (two ? f1 + f2 + 3 : f1)) / 2;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   if (!state.lite) { ctx.shadowColor = "rgba(0,20,26,0.75)"; ctx.shadowBlur = 6; ctx.shadowOffsetY = 1; }
-  ctx.fillStyle = "#fff"; ctx.font = `700 ${f1}px ${FONT}`;
-  ctx.fillText(!two && o.tag ? `${o.line1} · ${o.tag}` : o.line1 ?? "", 0, top + f1 / 2);
+  ctx.fillStyle = "#fff"; ctx.font = `700 ${f1}px ${FONT}`; ctx.fillText(o.line1 ?? "", 0, top + f1 / 2);
   if (two) { ctx.font = `600 ${f2}px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,0.86)"; ctx.fillText(o.line2, 0, top + f1 + 3 + f2 / 2); }
   ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
   if (bar) {
@@ -376,7 +375,7 @@ function drawBand(pts, nowX, q, frame) {
     if (x1 < -40) continue;
     ctx.rect(x0, yOf(pts[i].ask), x1 - x0, yOf(pts[i].bid) - yOf(pts[i].ask));
   }
-  ctx.fillStyle = C.band + "0.16)"; ctx.fill();
+  ctx.fillStyle = C.band + "0.09)"; ctx.fill();
 
   // Project today's bid and ask across the future so each square shows how far it is.
   ctx.setLineDash([3, 7]); ctx.lineWidth = 1.4; ctx.lineDashOffset = reduceMotion ? 0 : -frame / 40;
@@ -388,28 +387,13 @@ function drawBand(pts, nowX, q, frame) {
   ctx.setLineDash([]);
 }
 
-/**
- * The price the line draws. With nothing open it is the middle of bid and ask. While you hold
- * squares it moves onto the price that decides them, so touching a square is exactly a hit:
- * squares above are hit by the bid (state.lineK = 1), squares below by the ask (lineK = -1).
- */
-const linePrice = (q) => (q.bid + q.ask) / 2 - state.lineK * (q.ask - q.bid) / 2;
-function lineTarget() {
-  let soonest = null;
-  for (const p of state.positions) {
-    if (p.status !== "open" || p.symbol !== state.contract?.symbol) continue;
-    if (!soonest || p.deadline < soonest.deadline) soonest = p;
-  }
-  return !soonest ? 0 : soonest.side === "yes" ? 1 : -1;
-}
-
 function drawLine(pts, nowX, headY, frame, busy) {
   if (!pts.length) return;
   // Mid line, with each 1-cent step eased into an S-curve so it flows.
   ctx.beginPath();
   let started = false, prevY = 0;
   for (let i = 0; i < pts.length; i++) {
-    const x = xOf(pts[i].t), y = yOf(linePrice(pts[i]));
+    const x = xOf(pts[i].t), y = yOf((pts[i].bid + pts[i].ask) / 2);
     const nextX = i + 1 < pts.length ? xOf(pts[i + 1].t) : nowX;
     if (nextX < -40) { prevY = y; continue; }
     if (!started) { ctx.moveTo(Math.max(x, -40), y); started = true; }
@@ -468,15 +452,14 @@ function draw(frame) {
   CELL_H = state.center === null || reduceMotion ? fitH : CELL_H + (fitH - CELL_H) * 0.06;
 
   const mid = (q.bid + q.ask) / 2;
-  state.lineK += (lineTarget() - state.lineK) * (reduceMotion ? 1 : 0.12);
-  if (state.center === null) { state.center = mid; state.shownMid = linePrice(q); }
+  if (state.center === null) { state.center = mid; state.shownMid = mid; }
   // Follow gently when the price drifts, quickly when it runs, so the line never leaves the screen.
   const rowsOff = Math.abs(mid - state.center) / 0.01;
   state.center += (mid - state.center) * (rowsOff > 2.5 ? 0.16 : rowsOff > 1.2 ? 0.07 : 0.03);
   // "Busy" = the price has changed several times in the last few seconds; decoration backs off then.
   while (state.tickTimes.length && frame - state.tickTimes[0] > 3000) state.tickTimes.shift();
   const busy = state.tickTimes.length >= 4;
-  state.shownMid += (linePrice(q) - state.shownMid) * (reduceMotion ? 1 : 0.18);
+  state.shownMid += (mid - state.shownMid) * (reduceMotion ? 1 : 0.18);
   state.headKick *= 0.9;
 
   const t = now(), nowX = W * NOW_AT;
@@ -654,10 +637,7 @@ function draw(frame) {
     const flick = left < 0.3 && !reduceMotion ? 0.85 + 0.15 * Math.sin(frame / 60) : 1;
     tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
       scale: s, alpha: flick, charge, fromTop: p.side === "no", timeLeft: left, near,
-      // Always say how far the price that counts (bid above the line, ask below) still has to go:
-      // the drawn line is the middle of the two, so it can cross a square that hasn't hit yet.
-      line1: "+" + fmtAmt(winOf(p)), line2: gap <= 1e-9 ? "hitting…" : Math.max(1, Math.round(gap * 100)) + "¢ to go",
-      tag: gap <= 1e-9 ? "" : Math.max(1, Math.round(gap * 100)) + "¢",
+      line1: "+" + fmtAmt(winOf(p)), line2: near ? "1¢ AWAY" : fmtAmt(p.cost) + " in",
     });
   }
   for (const [key, g] of state.ghosts) {
@@ -751,8 +731,7 @@ function draw(frame) {
   // readout beside the head: who and what chance (as Gemini's charts label it), bid/ask, buyers vs sellers
   {
     const name = (state.contract?.label ?? "").slice(0, 16), pct = Math.round(mid * 100) + "%";
-    // Name the price the line is on while it follows one side.
-    const quoteTxt = state.lineK > 0.5 ? "Line on sell " + cents(q.bid) + " · buy " + cents(q.ask) : state.lineK < -0.5 ? "Line on buy " + cents(q.ask) + " · sell " + cents(q.bid) : "Sell " + cents(q.bid) + " · Buy " + cents(q.ask);
+    const quoteTxt = cents(q.bid) + " / " + cents(q.ask);
     ctx.textAlign = "left"; ctx.textBaseline = "middle";
     ctx.font = `700 17px ${FONT}`; const w1 = ctx.measureText(name + "  " + pct).width;
     ctx.font = `600 14px ${FONT}`; const w2 = ctx.measureText(quoteTxt).width;
