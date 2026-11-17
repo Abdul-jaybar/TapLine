@@ -282,7 +282,7 @@ function rr(c, x, y, w, h, r) {
 
 /**
  * A glass tile centred on (cx, cy): cast shadow, tinted translucent body, lit top edge, bright outline.
- * o: { scale, alpha, tint, bright, line1, line2, charge, fromTop, timeLeft, near }
+ * o: { scale, alpha, tint, bright, line1, line2, tag (short line2 for small tiles), charge, fromTop, timeLeft, near }
  */
 function tile(cx, cy, w, h, o) {
   const alpha = o.alpha ?? 1;
@@ -323,7 +323,8 @@ function tile(cx, cy, w, h, o) {
   const top = -h / 2 + (room - (two ? f1 + f2 + 3 : f1)) / 2;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   if (!state.lite) { ctx.shadowColor = "rgba(0,20,26,0.75)"; ctx.shadowBlur = 6; ctx.shadowOffsetY = 1; }
-  ctx.fillStyle = "#fff"; ctx.font = `700 ${f1}px ${FONT}`; ctx.fillText(o.line1 ?? "", 0, top + f1 / 2);
+  ctx.fillStyle = "#fff"; ctx.font = `700 ${f1}px ${FONT}`;
+  ctx.fillText(!two && o.tag ? `${o.line1} · ${o.tag}` : o.line1 ?? "", 0, top + f1 / 2);
   if (two) { ctx.font = `600 ${f2}px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,0.86)"; ctx.fillText(o.line2, 0, top + f1 + 3 + f2 / 2); }
   ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
   if (bar) {
@@ -375,7 +376,7 @@ function drawBand(pts, nowX, q, frame) {
     if (x1 < -40) continue;
     ctx.rect(x0, yOf(pts[i].ask), x1 - x0, yOf(pts[i].bid) - yOf(pts[i].ask));
   }
-  ctx.fillStyle = C.band + "0.09)"; ctx.fill();
+  ctx.fillStyle = C.band + "0.16)"; ctx.fill();
 
   // Project today's bid and ask across the future so each square shows how far it is.
   ctx.setLineDash([3, 7]); ctx.lineWidth = 1.4; ctx.lineDashOffset = reduceMotion ? 0 : -frame / 40;
@@ -637,7 +638,10 @@ function draw(frame) {
     const flick = left < 0.3 && !reduceMotion ? 0.85 + 0.15 * Math.sin(frame / 60) : 1;
     tile(x + w / 2 + jx, y + CELL_H / 2 + jy, w - 10, CELL_H - Math.min(10, CELL_H * 0.2), {
       scale: s, alpha: flick, charge, fromTop: p.side === "no", timeLeft: left, near,
-      line1: "+" + fmtAmt(winOf(p)), line2: near ? "1¢ AWAY" : fmtAmt(p.cost) + " in",
+      // Always say how far the price that counts (bid above the line, ask below) still has to go:
+      // the drawn line is the middle of the two, so it can cross a square that hasn't hit yet.
+      line1: "+" + fmtAmt(winOf(p)), line2: gap <= 1e-9 ? "hitting…" : Math.max(1, Math.round(gap * 100)) + "¢ to go",
+      tag: gap <= 1e-9 ? "" : Math.max(1, Math.round(gap * 100)) + "¢",
     });
   }
   for (const [key, g] of state.ghosts) {
