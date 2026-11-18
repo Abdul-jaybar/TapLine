@@ -81,6 +81,11 @@ export function groupGames(events: RawEvent[]): Game[] {
       g.title = e.title;
       g.startTime = e.startTime;
     }
+    // Some games have no Winner market (only spread, totals or props); name them from any market ("A vs B: Point Spread").
+    if (!g.title && e.title.includes(": ")) {
+      g.title = e.title.split(": ")[0] ?? e.title;
+      g.startTime ??= e.startTime;
+    }
     const contracts = e.contracts
       .filter((c) => c.status === "active" && c.marketState !== "closed")
       .map((c) => ({
